@@ -180,4 +180,13 @@ async function generarRecibo({ cliente, monto, concepto, numero = '0001' }) {
   });
 }
 
-module.exports = { generarRecibo, generarPresupuesto };
+async function generarDocumentoLibre({ titulo, contenido }) {
+  return generarPDFBuffer((doc) => {
+    let y = encabezado(doc, titulo || 'Documento', '—', new Date().toLocaleDateString('es-AR'));
+    const ancho = doc.page.width;
+    doc.fillColor(NEGRO).fontSize(10).font('Helvetica').text(contenido, 30, y + 10, { width: ancho - 60, align: 'left' });
+    piePagina(doc);
+  });
+}
+
+module.exports = { generarRecibo, generarPresupuesto, generarDocumentoLibre };
