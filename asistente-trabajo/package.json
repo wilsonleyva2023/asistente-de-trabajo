@@ -1,0 +1,21 @@
+{
+  "name": "asistente-trabajo",
+  "version": "1.0.0",
+  "description": "Asistente de Telegram para gestion de trabajos de plomeria, gas, electricidad, aire acondicionado y camaras de seguridad",
+  "main": "src/index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "telegraf": "^4.16.3",
+    "@supabase/supabase-js": "^2.45.4",
+    "pdfkit": "^0.15.0",
+    "node-cron": "^3.0.3",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
