@@ -1,8 +1,7 @@
 const { supabase } = require('../db');
+const cobros = require('./cobros');
 
-// items: [{ descripcion, monto }, ...]
 async function crearPresupuesto({ cliente_id, items, descripcion, monto }) {
-  // Compatibilidad: si viene descripcion+monto sueltos (sin items), se arma un solo ítem.
   const listaItems = items && items.length ? items : [{ descripcion, monto }];
   const totalMonto = listaItems.reduce((acc, i) => acc + Number(i.monto || 0), 0);
   const descripcionGeneral = listaItems.map((i) => i.descripcion).join(' + ');
@@ -34,7 +33,22 @@ async function obtenerItems(presupuesto_id) {
   return data;
 }
 
-// Borra ítems puntuales de un presupuesto (temporal por defecto) y recalcula el total.
+// Recalcula el total del presupuesto Y actualiza la deuda pendiente asociada, para que nunca queden desincronizados.
+async function recalcularYSincronizar(presupuesto_id) {
+  const itemsRestantes = await obtenerItems(presupuesto_id);
+  const nuevoTotal = itemsRestantes.reduce((acc, i) => acc + Number(i.monto), 0);
+  const nuevaDescripcion = itemsRestantes.map((i) => i.descripcion).join(' + ') || '(sin ítems)';
+  const { data, error } = await supabase
+    .from('presupuestos')
+    .update({ monto: nuevoTotal, descripcion: nuevaDescripcion, fecha_ultimo_contacto: new Date().toISOString() })
+    .eq('id', presupuesto_id)
+    .select()
+    .single();
+  if (error) throw error;
+  await cobros.actualizarMontoPorPresupuesto(presupuesto_id, nuevoTotal);
+  return { presupuesto: data, items: itemsRestantes };
+}
+
 async function quitarItems(presupuesto_id, itemIds, permanente = false) {
   if (permanente) {
     const { error } = await supabase.from('presupuesto_items').delete().in('id', itemIds);
@@ -43,35 +57,16 @@ async function quitarItems(presupuesto_id, itemIds, permanente = false) {
     const { error } = await supabase.from('presupuesto_items').update({ archivado: true }).in('id', itemIds);
     if (error) throw error;
   }
-  const itemsRestantes = await obtenerItems(presupuesto_id);
-  const nuevoTotal = itemsRestantes.reduce((acc, i) => acc + Number(i.monto), 0);
-  const nuevaDescripcion = itemsRestantes.map((i) => i.descripcion).join(' + ') || '(sin ítems)';
-  const { data, error: errorUpd } = await supabase
-    .from('presupuestos')
-    .update({ monto: nuevoTotal, descripcion: nuevaDescripcion, fecha_ultimo_contacto: new Date().toISOString() })
-    .eq('id', presupuesto_id)
-    .select()
-    .single();
-  if (errorUpd) throw errorUpd;
-  return { presupuesto: data, items: itemsRestantes };
+  return recalcularYSincronizar(presupuesto_id);
 }
 
 async function agregarItems(presupuesto_id, items) {
   const { error } = await supabase.from('presupuesto_items').insert(items.map((i) => ({ presupuesto_id, descripcion: i.descripcion, monto: i.monto })));
   if (error) throw error;
-  const itemsActuales = await obtenerItems(presupuesto_id);
-  const nuevoTotal = itemsActuales.reduce((acc, i) => acc + Number(i.monto), 0);
-  const nuevaDescripcion = itemsActuales.map((i) => i.descripcion).join(' + ');
-  const { data, error: errorUpd } = await supabase
-    .from('presupuestos')
-    .update({ monto: nuevoTotal, descripcion: nuevaDescripcion, fecha_ultimo_contacto: new Date().toISOString() })
-    .eq('id', presupuesto_id)
-    .select()
-    .single();
-  if (errorUpd) throw errorUpd;
-  return { presupuesto: data, items: itemsActuales };
+  return recalcularYSincronizar(presupuesto_id);
 }
 
+// Cambiar estado también sincroniza la deuda: si se rechaza o queda sin concretar, se cancela la deuda asociada.
 async function cambiarEstado(id, estado) {
   const { data, error } = await supabase
     .from('presupuestos')
@@ -80,6 +75,9 @@ async function cambiarEstado(id, estado) {
     .select()
     .single();
   if (error) throw error;
+  if (estado === 'rechazado' || estado === 'no_concretado') {
+    await cobros.cancelarPorPresupuesto(id);
+  }
   return data;
 }
 
@@ -118,6 +116,7 @@ async function actualizarPresupuesto(id, cambios) {
     .select()
     .single();
   if (error) throw error;
+  if (cambios.monto) await cobros.actualizarMontoPorPresupuesto(id, cambios.monto);
   return data;
 }
 
@@ -132,10 +131,10 @@ async function obtenerPresupuestosPorCliente(cliente_id) {
   return data;
 }
 
-// Borrado temporal: se archiva, no aparece en listas normales, se puede restaurar.
 async function archivarPresupuesto(id) {
   const { data, error } = await supabase.from('presupuestos').update({ archivado: true }).eq('id', id).select().single();
   if (error) throw error;
+  await cobros.cancelarPorPresupuesto(id);
   return data;
 }
 
@@ -145,13 +144,11 @@ async function restaurarPresupuesto(id) {
   return data;
 }
 
-// Borrado definitivo: no se puede deshacer.
 async function eliminarPresupuestoPermanente(id) {
   const { error } = await supabase.from('presupuestos').delete().eq('id', id);
   if (error) throw error;
 }
 
-// Para poder "restaurar el último que borré"
 async function ultimoArchivado(cliente_id) {
   const { data, error } = await supabase
     .from('presupuestos')
@@ -175,6 +172,17 @@ async function presupuestosArchivados() {
   return data;
 }
 
+// Extracto de cuenta / reporte: todos los presupuestos de un cliente, sin importar estado
+async function historialCompleto(cliente_id) {
+  const { data, error } = await supabase
+    .from('presupuestos')
+    .select('*, presupuesto_items(*)')
+    .eq('cliente_id', cliente_id)
+    .order('fecha_creacion', { ascending: true });
+  if (error) throw error;
+  return data;
+}
+
 module.exports = {
   crearPresupuesto,
   obtenerItems,
@@ -190,4 +198,5 @@ module.exports = {
   eliminarPresupuestoPermanente,
   ultimoArchivado,
   presupuestosArchivados,
+  historialCompleto,
 };
