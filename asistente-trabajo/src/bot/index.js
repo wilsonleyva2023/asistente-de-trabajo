@@ -10,6 +10,7 @@ const ia = require('../services/ia');
 
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN);
 
+// Solo tu usuario de Telegram puede usar el bot (seguridad básica).
 bot.use((ctx, next) => {
   const permitido = process.env.TELEGRAM_CHAT_ID_PERMITIDO;
   if (permitido && String(ctx.chat?.id) !== String(permitido)) {
@@ -18,6 +19,7 @@ bot.use((ctx, next) => {
   return next();
 });
 
+// ---------- Ayuda ----------
 const TEXTO_AYUDA =
   'Hola! Soy tu asistente de trabajo. Podés escribirme normal, como "hacele un presupuesto a Juan por instalar un termotanque, 45000 pesos", o usar estos comandos si preferís algo más guiado:\n\n' +
   '/nuevocliente - Cargar un cliente nuevo\n' +
@@ -40,6 +42,7 @@ bot.command('cancelar', (ctx) => {
   ctx.reply('Listo, cancelado.');
 });
 
+// ---------- Comandos guiados (siguen andando igual que antes) ----------
 bot.command('nuevocliente', (ctx) => {
   session.set(ctx.chat.id, { flujo: 'nuevocliente', paso: 'nombre', datos: {} });
   ctx.reply('¿Nombre del cliente?');
@@ -79,10 +82,12 @@ bot.command('pendientes', (ctx) => enviarPendientes(ctx));
 bot.command('recontactar', (ctx) => enviarRecontactar(ctx));
 bot.command('agenda', async (ctx) => enviarAgendaDelDia(ctx.chat.id));
 
+// ---------- Router principal de texto ----------
 bot.on('text', async (ctx) => {
   const estado = session.get(ctx.chat.id);
   const texto = ctx.message.text.trim();
 
+  // Si está en medio de un flujo guiado (comando paso a paso), seguimos ese flujo
   if (estado) {
     try {
       switch (estado.flujo) {
@@ -119,6 +124,7 @@ bot.on('text', async (ctx) => {
     return;
   }
 
+  // Si no hay ningún flujo activo, interpretamos el mensaje con IA
   try {
     await ctx.sendChatAction('typing');
     const resultado = await ia.interpretarMensaje(texto);
@@ -128,6 +134,8 @@ bot.on('text', async (ctx) => {
     ctx.reply('No pude entender bien ese mensaje. Podés probar de nuevo con otras palabras, o usar /ayuda para ver los comandos guiados.');
   }
 });
+
+// ================= DISPATCHER DE IA =================
 
 async function ejecutarAccionIA(ctx, r) {
   switch (r.accion) {
@@ -158,7 +166,7 @@ async function ejecutarAccionIA(ctx, r) {
 
     case 'crear_presupuesto': {
       const cliente = await resolverCliente(ctx, r.cliente_nombre);
-      if (!cliente) return;
+      if (!cliente) return; // ya se avisó al usuario
       if (!r.descripcion) {
         session.set(ctx.chat.id, { flujo: 'presupuesto', paso: 'descripcion', datos: { cliente } });
         return ctx.reply(`Cliente: ${cliente.nombre}. ¿Descripción del trabajo a presupuestar?`);
@@ -265,6 +273,7 @@ async function ejecutarAccionIA(ctx, r) {
   }
 }
 
+// Busca un cliente por nombre; si hay 0 o varios resultados, le avisa al usuario y devuelve null
 async function resolverCliente(ctx, nombre) {
   if (!nombre) {
     ctx.reply('¿Para qué cliente es? Decime el nombre.');
@@ -280,8 +289,6 @@ async function resolverCliente(ctx, nombre) {
     return null;
   }
   return encontrados[0];
-}
-return encontrados[0];
 }
 
 // ================= CONSULTAS =================
@@ -305,6 +312,8 @@ async function enviarRecontactar(ctx) {
   });
   ctx.reply(msg);
 }
+
+// ================= FLUJOS GUIADOS (comandos paso a paso) =================
 
 async function pasoNuevoCliente(ctx, estado, texto) {
   if (estado.paso === 'nombre') {
@@ -561,4 +570,3 @@ async function enviarAgendaDelDia(chatId) {
 }
 
 module.exports = { bot, enviarAgendaDelDia };
-
