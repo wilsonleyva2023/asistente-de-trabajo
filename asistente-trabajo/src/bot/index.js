@@ -154,6 +154,56 @@ bot.on('voice', async (ctx) => {
   }
 });
 
+async function procesarConArchivo(ctx, texto, buffer, mimeType) {
+  const estado = session.get(ctx.chat.id);
+  if (estado) {
+    return ctx.reply('Recibí el archivo, pero estás en medio de completar otra cosa. Escribí /cancelar primero si querés que lo procese.');
+  }
+  try {
+    await ctx.sendChatAction('typing');
+    const historial = session.obtenerHistorial(ctx.chat.id);
+    const respuesta = await ia.conversar(historial, texto, (nombre, args) => ejecutarHerramienta(ctx, nombre, args), [
+      { mimeType, data: buffer.toString('base64') },
+    ]);
+    session.podarHistorial(ctx.chat.id);
+    await ctx.reply(respuesta);
+  } catch (err) {
+    console.error('Error procesando archivo:', err);
+    session.limpiarHistorial(ctx.chat.id);
+    ctx.reply('No pude procesar ese archivo. Probá de nuevo.');
+  }
+}
+
+bot.on('photo', async (ctx) => {
+  try {
+    const fotos = ctx.message.photo;
+    const fileId = fotos[fotos.length - 1].file_id; // la de mayor resolución
+    const url = await ctx.telegram.getFileLink(fileId);
+    const resp = await fetch(url);
+    const buffer = Buffer.from(await resp.arrayBuffer());
+    const texto = ctx.message.caption || 'Te mando una foto, fijate qué es y decime qué te parece o ayudame con lo que corresponda.';
+    await procesarConArchivo(ctx, texto, buffer, 'image/jpeg');
+  } catch (err) {
+    console.error('Error procesando foto:', err);
+    ctx.reply('No pude procesar esa foto. Probá de nuevo.');
+  }
+});
+
+bot.on('document', async (ctx) => {
+  try {
+    const doc = ctx.message.document;
+    const url = await ctx.telegram.getFileLink(doc.file_id);
+    const resp = await fetch(url);
+    const buffer = Buffer.from(await resp.arrayBuffer());
+    const mime = doc.mime_type || 'application/octet-stream';
+    const texto = ctx.message.caption || `Te mando un documento (${doc.file_name || 'sin nombre'}). Fijate qué es y decime qué te parece o ayudame con lo que corresponda.`;
+    await procesarConArchivo(ctx, texto, buffer, mime);
+  } catch (err) {
+    console.error('Error procesando documento:', err);
+    ctx.reply('No pude procesar ese documento. Puede que el formato no sea compatible. Probá con una foto o un PDF.');
+  }
+});
+
 // ================= HERRAMIENTAS QUE LA IA PUEDE USAR =================
 
 async function resolverClienteSimple(nombre) {
