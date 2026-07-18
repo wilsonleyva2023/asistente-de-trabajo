@@ -134,6 +134,22 @@ bot.on('text', async (ctx) => {
     ctx.reply('No pude entender bien ese mensaje. Podés probar de nuevo con otras palabras, o usar /ayuda para ver los comandos guiados.');
   }
 });
+// ---------- Mensajes de voz ----------
+bot.on('voice', async (ctx) => {
+  try {
+    await ctx.sendChatAction('typing');
+    const fileId = ctx.message.voice.file_id;
+    const url = await ctx.telegram.getFileLink(fileId);
+    const resp = await fetch(url);
+    const arrayBuffer = await resp.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+    const resultado = await ia.interpretarAudio(buffer, 'audio/ogg');
+    await ejecutarAccionIA(ctx, resultado);
+  } catch (err) {
+    console.error('Error interpretando audio:', err);
+    ctx.reply('No pude entender ese audio. Probá de nuevo o escribilo por texto.');
+  }
+});
 
 // ================= DISPATCHER DE IA =================
 
