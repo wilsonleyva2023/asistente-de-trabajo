@@ -69,4 +69,45 @@ async function interpretarMensaje(texto) {
   }
 }
 
-module.exports = { interpretarMensaje };
+async function interpretarAudio(bufferAudio, mimeType) {
+  const instrucciones = INSTRUCCIONES.replace('{FECHA_ACTUAL}', new Date().toISOString());
+  const base64Audio = bufferAudio.toString('base64');
+
+  const body = {
+    contents: [
+      {
+        parts: [
+          { text: instrucciones + '\n\nEscuchá el audio adjunto: es un mensaje hablado del usuario. Interpretalo igual que si fuera texto.' },
+          { inline_data: { mime_type: mimeType, data: base64Audio } },
+        ],
+      },
+    ],
+    generationConfig: {
+      responseMimeType: 'application/json',
+      temperature: 0.2,
+    },
+  };
+
+  const resp = await fetch(URL_API, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+
+  if (!resp.ok) {
+    const errText = await resp.text();
+    throw new Error(`Error de Gemini (${resp.status}): ${errText}`);
+  }
+
+  const data = await resp.json();
+  const textoRespuesta = data.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!textoRespuesta) throw new Error('Gemini no devolvió respuesta.');
+
+  try {
+    return JSON.parse(textoRespuesta);
+  } catch (e) {
+    throw new Error('No se pudo interpretar la respuesta de Gemini: ' + textoRespuesta);
+  }
+}
+
+module.exports = { interpretarMensaje, interpretarAudio };
