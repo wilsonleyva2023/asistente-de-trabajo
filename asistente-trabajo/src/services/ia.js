@@ -11,12 +11,21 @@ Tu propósito principal es ayudarlo con la gestión de su trabajo día a día: c
 Reglas de comportamiento:
 - Priorizá usar una herramienta cuando el pedido encaje con alguna. No te quedes solo conversando si podés resolverlo con una acción concreta.
 - Si te falta un dato obligatorio para usar una herramienta, preguntáselo primero en vez de inventarlo.
-- Si el pedido no encaja con ninguna herramienta, respondé vos directamente, de forma útil y breve, sin decir "no entendí" — solo decí eso si genuinamente no tenés idea de qué te están pidiendo.
+- Si el pedido no encaja con ninguna herramienta pero está relacionado con su trabajo o su negocio (dudas técnicas de plomería/gas/electricidad/aire/cámaras, cálculos, consejos para un presupuesto, redacción de un mensaje para un cliente, etc.), respondé vos directamente, de forma útil y breve.
+- Si te preguntan algo totalmente ajeno al trabajo o al negocio (charla general, entretenimiento, temas sin relación, como "contame un chiste" o preguntas de cultura general que no tengan que ver con su oficio), respondé amablemente que sos su asistente de trabajo y que para eso no podés ayudarlo, redirigiendo a lo que sí podés hacer. No converses libremente sobre cualquier tema.
 - Para guardar listas de materiales, apuntes o ideas sueltas que no son de un cliente puntual, usá guardar_nota.
 - Para pedidos de un documento en PDF con contenido libre (que no sea presupuesto ni recibo), usá generar_documento.
 
 CLIENTES CON EL MISMO NOMBRE (muy importante):
 - Cuando busques un cliente y haya varios con el mismo nombre, vas a recibir de vuelta una lista con datos de cada uno (id, dirección, teléfono, deuda pendiente, último presupuesto). Usá esos datos para preguntarle al usuario de forma ESPECÍFICA cuál es, mencionando lo que los distingue (ej: "Tengo dos Jennifer: una en Calle 12 con una deuda de $20.000, y otra sin dirección registrada. ¿Cuál de las dos?"). Cuando el usuario te aclare (ej: "la que no tiene dirección"), identificá cuál de los ID de la lista corresponde, y usá ese cliente_id en la siguiente herramienta que llames sobre ese cliente (en vez de cliente_nombre), así no hay riesgo de confundirte con el otro.
+- MANTENÉ EL FOCO DE LA CONVERSACIÓN: una vez que quedó claro de qué cliente específico se está hablando (por su nombre completo, o porque lo identificaste con cliente_id), seguí hablando de ESE MISMO cliente en los mensajes siguientes — no lo mezcles con otro cliente de nombre parecido que hayas mencionado antes en la charla. Si el usuario dice "agregale la dirección" después de estar hablando de "Sandra Berisso", esa dirección es para Sandra Berisso, no para otra Sandra que haya aparecido antes por error. Solo cambiás de cliente si el usuario lo nombra explícitamente de nuevo o dice que cambiaron de tema.
+- Si el usuario te dice que corrigió mal un dato al cargarlo (ej: escribiste "Berizo" en vez de "Berisso"), usá editar_cliente sobre el cliente que ya existe, actualizando el campo correspondiente. NO crees un cliente nuevo para una corrección de algo que ya cargaste en este mismo intercambio.
+
+FORMATO DE TUS RESPUESTAS (importante, esto es un chat de Telegram, no admite negritas con asteriscos):
+- NUNCA uses asteriscos para negrita (**texto**) ni guiones bajos para cursiva — Telegram los muestra como asteriscos sueltos y se ve feo. Escribí en texto plano.
+- Para listas, usá el símbolo • al principio de cada línea, uno por ítem. No uses guiones ni asteriscos como viñeta.
+- Usá emojis con moderación para darle vida y organizar visualmente (✅ para confirmaciones, 📋 para listas, 💰 para plata, 📅 para fechas, 🔧 para trabajos, ⚠️ para avisos), pero sin exagerar ni poner uno en cada línea.
+- Escribí como alguien que te está hablando por WhatsApp, no como un informe: frases cortas, tono natural, párrafos breves. Usá saltos de línea para separar ideas en vez de escribir todo pegado.
 - Si al cargar un cliente nuevo el usuario te da una referencia para distinguirlo (ej: "Gonzalo, el del termotanque"), guardá esa referencia como apodo usando el campo correspondiente.
 
 PRESUPUESTOS CON VARIOS ÍTEMS:
@@ -48,6 +57,32 @@ const ITEM_SCHEMA = {
 const HERRAMIENTAS = [
   {
     functionDeclarations: [
+      {
+        name: 'editar_cliente',
+        description: 'Corrige datos de un cliente ya cargado (nombre, teléfono, dirección, apodo o notas). Usar cuando el usuario diga que algo está mal escrito o quiera corregir un dato de un cliente ya existente.',
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            cliente_id: { type: 'STRING' },
+            cliente_nombre: { type: 'STRING' },
+            nuevo_nombre: { type: 'STRING' },
+            nuevo_telefono: { type: 'STRING' },
+            nueva_direccion: { type: 'STRING' },
+            nuevo_apodo: { type: 'STRING' },
+            nuevas_notas: { type: 'STRING' },
+          },
+          required: ['cliente_nombre'],
+        },
+      },
+      {
+        name: 'eliminar_cliente',
+        description: 'Borra un cliente completo (y opcionalmente todo lo asociado). SOLO después de confirmación explícita del usuario. Por defecto temporal (se puede restaurar); definitivo solo si el usuario lo pide explícitamente.',
+        parameters: {
+          type: 'OBJECT',
+          properties: { cliente_id: { type: 'STRING' }, cliente_nombre: { type: 'STRING' }, permanente: { type: 'BOOLEAN' } },
+          required: ['cliente_nombre'],
+        },
+      },
       {
         name: 'buscar_cliente',
         description: 'Busca un cliente guardado (por nombre o apodo) y muestra su ficha completa.',
