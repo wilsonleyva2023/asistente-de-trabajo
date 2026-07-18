@@ -3,6 +3,16 @@ const express = require('express');
 const { bot } = require('./bot');
 const { iniciarTareasProgramadas } = require('./jobs/scheduler');
 
+// Salvaguarda: si algo falla de forma inesperada en cualquier parte del código
+// (por ejemplo, un corte de red al mandar un archivo a Telegram), esto evita
+// que el servidor entero se caiga. Solo se registra el error en los Logs.
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled Rejection (el servidor sigue funcionando):', reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught Exception (el servidor sigue funcionando):', err);
+});
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
