@@ -405,6 +405,15 @@ async function ejecutarHerramienta(ctx, nombre, args) {
       await presupuestos.restaurarPresupuesto(archivado.id);
       return { ok: true };
     }
+    case 'listar_presupuestos': {
+      const lista = await presupuestos.listarTodos();
+      if (!lista.length) { await ctx.reply('No tenés presupuestos guardados todavía.'); return { cantidad: 0 }; }
+      let msg = '📋 Presupuestos guardados:\n\n';
+      lista.forEach((p) => { msg += `• ${p.clientes?.nombre || 'Cliente'} - ${p.descripcion} - $${p.monto} [${p.estado}]\n`; });
+      await ctx.reply(msg);
+      return { cantidad: lista.length };
+    }
+
     case 'listar_presupuestos_archivados': {
       const lista = await presupuestos.presupuestosArchivados();
       if (!lista.length) { await ctx.reply('No tenés presupuestos borrados temporalmente. 👍'); return { cantidad: 0 }; }
@@ -579,19 +588,23 @@ async function ejecutarHerramienta(ctx, nombre, args) {
       return { ok: true };
     }
     case 'consultar_agenda': {
-      const rango = args.rango || 'hoy';
+      const rango = args.rango || 'semana';
       const { desde, hasta } = rangoFechas(rango);
       const lista = await visitas.visitasEnRango(desde, hasta);
-      const etiqueta = rango === 'manana' ? 'mañana' : rango === 'semana' ? 'esta semana' : 'hoy';
-      if (!lista.length) { await ctx.reply(`No tenés visitas agendadas para ${etiqueta}. 👍`); return { cantidad: 0 }; }
-      let msg = `📅 Agenda de ${etiqueta}:\n\n`;
-      lista.forEach((v) => {
-        const fecha = new Date(v.fecha_hora);
-        const fechaStr = rango === 'semana' ? fecha.toLocaleDateString('es-AR', { weekday: 'short', day: 'numeric' }) + ' ' : '';
-        msg += `• ${fechaStr}${fecha.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })} - ${v.clientes?.nombre}: ${v.descripcion}\n`;
-      });
-      await ctx.reply(msg);
-      return { cantidad: lista.length };
+      const conPresupuesto = await Promise.all(
+        lista.map(async (v) => {
+          const activo = await presupuestos.obtenerUltimoPresupuesto(v.cliente_id);
+          return {
+            fecha: new Date(v.fecha_hora).toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'numeric' }),
+            hora: new Date(v.fecha_hora).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }),
+            cliente: v.clientes?.nombre,
+            direccion: v.clientes?.direccion || null,
+            descripcion: v.descripcion,
+            presupuesto: activo ? { descripcion: activo.descripcion, monto: activo.monto, estado: activo.estado } : null,
+          };
+        })
+      );
+      return { cantidad: conPresupuesto.length, visitas: conPresupuesto };
     }
 
     // ---- RECORDATORIOS ----
@@ -614,6 +627,18 @@ async function ejecutarHerramienta(ctx, nombre, args) {
       if (!lista.length) return { error: 'No encontré ningún recordatorio con ese texto.' };
       await recordatorios.eliminarRecordatorio(lista[0].id);
       return { ok: true };
+    }
+
+    case 'consultar_recordatorios': {
+      const rango = args.rango || 'semana';
+      const { desde, hasta } = rangoFechas(rango);
+      const lista = await recordatorios.recordatoriosEnRango(desde, hasta);
+      const items = lista.map((r) => ({
+        fecha: new Date(r.fecha_hora).toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'numeric' }),
+        hora: new Date(r.fecha_hora).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }),
+        texto: r.texto,
+      }));
+      return { cantidad: items.length, recordatorios: items };
     }
 
     // ---- NOTAS ----
