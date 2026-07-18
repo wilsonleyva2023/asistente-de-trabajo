@@ -21,7 +21,6 @@ async function marcarCobrado(id) {
   return data;
 }
 
-// Registra un pago parcial. Si con este pago se completa el total, lo marca cobrado solo.
 async function registrarPagoParcial(id, montoPagado) {
   const { data: actual, error: errorGet } = await supabase.from('cobros').select('*').eq('id', id).single();
   if (errorGet) throw errorGet;
@@ -93,6 +92,34 @@ async function ultimoArchivado(cliente_id) {
   return data;
 }
 
+// Usado por presupuestos.js para mantener sincronizado el monto cuando cambian los ítems
+async function actualizarMontoPorPresupuesto(presupuesto_id, nuevoMonto) {
+  const { data: cobro } = await supabase.from('cobros').select('*').eq('presupuesto_id', presupuesto_id).eq('archivado', false).maybeSingle();
+  if (!cobro) return null;
+  const { error } = await supabase.from('cobros').update({ monto: nuevoMonto }).eq('id', cobro.id);
+  if (error) throw error;
+  return cobro;
+}
+
+// Usado por presupuestos.js cuando se rechaza/archiva un presupuesto: cancela la deuda asociada
+async function cancelarPorPresupuesto(presupuesto_id) {
+  const { data: cobro } = await supabase.from('cobros').select('*').eq('presupuesto_id', presupuesto_id).eq('archivado', false).maybeSingle();
+  if (!cobro) return null;
+  const { error } = await supabase.from('cobros').update({ archivado: true }).eq('id', cobro.id);
+  if (error) throw error;
+  return cobro;
+}
+
+async function cobrosEnRango(desdeISO, hastaISO) {
+  const { data, error } = await supabase
+    .from('cobros')
+    .select('*, clientes(nombre)')
+    .gte('creado_en', desdeISO)
+    .lte('creado_en', hastaISO);
+  if (error) throw error;
+  return data;
+}
+
 module.exports = {
   crearCobro,
   marcarCobrado,
@@ -103,4 +130,7 @@ module.exports = {
   restaurarCobro,
   eliminarCobroPermanente,
   ultimoArchivado,
+  actualizarMontoPorPresupuesto,
+  cancelarPorPresupuesto,
+  cobrosEnRango,
 };
