@@ -187,11 +187,12 @@ async function generarPresupuesto({
   });
 }
 
-async function generarRecibo({ cliente, monto, concepto, numero = '0001' }) {
+async function generarRecibo({ cliente, items, monto, concepto, numero = '0001' }) {
+  const listaItems = items && items.length ? items : [{ descripcion: concepto, monto }];
   return generarPDFBuffer((doc) => {
     let y = encabezado(doc, 'Recibo de Pago', numero, new Date().toLocaleDateString('es-AR'));
     y = datosCliente(doc, y, cliente);
-    const { y: y2, total } = tablaItems(doc, y, [{ descripcion: concepto, monto }]);
+    const { y: y2, total } = tablaItems(doc, y, listaItems);
     totalFinal(doc, y2, total, 'RECIBIDO');
     piePagina(doc);
   });
