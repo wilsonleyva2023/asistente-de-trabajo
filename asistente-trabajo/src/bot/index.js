@@ -245,6 +245,38 @@ function errorClienteAmbiguo(opciones) {
   return { error: 'Hay varios clientes que coinciden. Preguntale al usuario cuál es, usando estos datos para distinguirlos.', opciones };
 }
 
+// Para acciones sobre un presupuesto YA EXISTENTE: filtra los clientes con ese nombre
+// a solo los que tienen un presupuesto activo, y usa los datos del presupuesto para desambiguar.
+async function resolverClienteConPresupuesto(args) {
+  if (args.cliente_id) {
+    const cliente = await clientes.obtenerCliente(args.cliente_id).catch(() => null);
+    if (cliente) {
+      const presupuesto = await presupuestos.obtenerUltimoPresupuesto(cliente.id);
+      if (!presupuesto) return { error: `${cliente.nombre} no tiene un presupuesto activo.` };
+      return { cliente, presupuesto };
+    }
+  }
+  const nombre = args.cliente_nombre;
+  if (!nombre) return { error: 'Falta el nombre del cliente.' };
+  const encontrados = await clientes.buscarClientesPorNombre(nombre);
+  if (!encontrados.length) return errorClienteNoEncontrado(nombre);
+  const conPresupuesto = [];
+  for (const c of encontrados) {
+    const p = await presupuestos.obtenerUltimoPresupuesto(c.id);
+    if (p) conPresupuesto.push({ cliente: c, presupuesto: p });
+  }
+  if (!conPresupuesto.length) return { error: `Ningún cliente llamado "${nombre}" tiene un presupuesto activo en este momento.` };
+  if (conPresupuesto.length === 1) return conPresupuesto[0];
+  const opciones = conPresupuesto.map(({ cliente, presupuesto }) => ({
+    cliente_id: cliente.id,
+    nombre: cliente.nombre,
+    direccion: cliente.direccion || 'sin dirección registrada',
+    presupuesto: presupuesto.descripcion,
+    monto: presupuesto.monto,
+  }));
+  return { error: `Hay varios clientes llamados "${nombre}" con un presupuesto activo. Preguntale al usuario cuál es usando estos datos.`, opciones };
+}
+
 async function ejecutarHerramienta(ctx, nombre, args) {
   switch (nombre) {
     case 'buscar_cliente': {
@@ -295,11 +327,9 @@ async function ejecutarHerramienta(ctx, nombre, args) {
     }
 
     case 'agregar_items_presupuesto': {
-      const cliente = await resolverCliente(args);
-      if (!cliente) return errorClienteNoEncontrado(args.cliente_nombre);
-      if (cliente.multiple) return errorClienteAmbiguo(cliente.opciones);
-      const ultimo = await presupuestos.obtenerUltimoPresupuesto(cliente.id);
-      if (!ultimo) return { error: `${cliente.nombre} no tiene presupuestos guardados.` };
+      const r = await resolverClienteConPresupuesto(args);
+      if (r.error) return r;
+      const { cliente, presupuesto: ultimo } = r;
       const { items } = await presupuestos.agregarItems(ultimo.id, args.items || []);
       const buffer = await pdf.generarPresupuesto({ cliente, items });
       await enviarDocumentoConReintento(ctx, { source: buffer, filename: `presupuesto-${cliente.nombre}.pdf` });
@@ -307,11 +337,9 @@ async function ejecutarHerramienta(ctx, nombre, args) {
     }
 
     case 'quitar_items_presupuesto': {
-      const cliente = await resolverCliente(args);
-      if (!cliente) return errorClienteNoEncontrado(args.cliente_nombre);
-      if (cliente.multiple) return errorClienteAmbiguo(cliente.opciones);
-      const ultimo = await presupuestos.obtenerUltimoPresupuesto(cliente.id);
-      if (!ultimo) return { error: `${cliente.nombre} no tiene presupuestos guardados.` };
+      const r = await resolverClienteConPresupuesto(args);
+      if (r.error) return r;
+      const { cliente, presupuesto: ultimo } = r;
       const itemsActuales = await presupuestos.obtenerItems(ultimo.id);
       const busquedas = (args.descripciones_items || []).map((s) => s.toLowerCase());
       const idsAQuitar = itemsActuales.filter((it) => busquedas.some((b) => it.descripcion.toLowerCase().includes(b))).map((it) => it.id);
@@ -325,11 +353,9 @@ async function ejecutarHerramienta(ctx, nombre, args) {
     }
 
     case 'editar_presupuesto': {
-      const cliente = await resolverCliente(args);
-      if (!cliente) return errorClienteNoEncontrado(args.cliente_nombre);
-      if (cliente.multiple) return errorClienteAmbiguo(cliente.opciones);
-      const ultimo = await presupuestos.obtenerUltimoPresupuesto(cliente.id);
-      if (!ultimo) return { error: `${cliente.nombre} no tiene presupuestos guardados.` };
+      const r = await resolverClienteConPresupuesto(args);
+      if (r.error) return r;
+      const { cliente, presupuesto: ultimo } = r;
       const cambios = {};
       if (args.nuevo_monto) cambios.monto = args.nuevo_monto;
       if (args.nueva_descripcion) cambios.descripcion = args.nueva_descripcion;
@@ -339,11 +365,9 @@ async function ejecutarHerramienta(ctx, nombre, args) {
     }
 
     case 'reenviar_presupuesto': {
-      const cliente = await resolverCliente(args);
-      if (!cliente) return errorClienteNoEncontrado(args.cliente_nombre);
-      if (cliente.multiple) return errorClienteAmbiguo(cliente.opciones);
-      const ultimo = await presupuestos.obtenerUltimoPresupuesto(cliente.id);
-      if (!ultimo) return { error: `${cliente.nombre} no tiene presupuestos guardados.` };
+      const r = await resolverClienteConPresupuesto(args);
+      if (r.error) return r;
+      const { cliente, presupuesto: ultimo } = r;
       const items = ultimo.presupuesto_items?.filter((i) => !i.archivado) || [{ descripcion: ultimo.descripcion, monto: ultimo.monto }];
       const buffer = await pdf.generarPresupuesto({
         cliente,
@@ -361,17 +385,29 @@ async function ejecutarHerramienta(ctx, nombre, args) {
     }
 
     case 'eliminar_presupuesto': {
-      const cliente = await resolverCliente(args);
-      if (!cliente) return errorClienteNoEncontrado(args.cliente_nombre);
-      if (cliente.multiple) return errorClienteAmbiguo(cliente.opciones);
-      const ultimo = await presupuestos.obtenerUltimoPresupuesto(cliente.id);
-      if (!ultimo) return { error: `${cliente.nombre} no tiene presupuestos guardados.` };
+      const r = await resolverClienteConPresupuesto(args);
+      if (r.error) return r;
+      const { cliente, presupuesto: ultimo } = r;
       if (args.permanente) {
         await presupuestos.eliminarPresupuestoPermanente(ultimo.id);
         return { ok: true, mensaje: 'Presupuesto borrado definitivamente, no se puede recuperar.' };
       }
       await presupuestos.archivarPresupuesto(ultimo.id);
       return { ok: true, mensaje: 'Presupuesto borrado (se puede restaurar si hace falta).' };
+    }
+
+    case 'listar_presupuestos_archivados': {
+      const lista = await presupuestos.presupuestosArchivados();
+      if (!lista.length) {
+        await ctx.reply('No tenés ningún presupuesto borrado temporalmente en este momento.');
+        return { cantidad: 0 };
+      }
+      let msg = '🗑️ Presupuestos borrados temporalmente (se pueden restaurar):\n\n';
+      lista.forEach((p) => {
+        msg += `• ${p.clientes?.nombre || 'Cliente'} - ${p.descripcion} ($${p.monto})\n`;
+      });
+      await ctx.reply(msg);
+      return { cantidad: lista.length };
     }
 
     case 'restaurar_presupuesto': {
