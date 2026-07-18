@@ -207,4 +207,38 @@ async function generarDocumentoLibre({ titulo, contenido }) {
   });
 }
 
-module.exports = { generarRecibo, generarPresupuesto, generarDocumentoLibre };
+async function generarExtracto({ cliente, presupuestos, recibos }) {
+  return generarPDFBuffer((doc) => {
+    let y = encabezado(doc, 'Extracto de Cuenta', '—', new Date().toLocaleDateString('es-AR'));
+    y = datosCliente(doc, y, cliente);
+    doc.fillColor(DORADO).fontSize(9).font('Helvetica-Bold').text('PRESUPUESTOS', 30, y);
+    y += 14;
+    (presupuestos || []).forEach((p) => {
+      doc.fillColor(NEGRO).fontSize(8.5).font('Helvetica').text(`${new Date(p.fecha_creacion).toLocaleDateString('es-AR')} - ${p.descripcion} - $${Number(p.monto).toLocaleString('es-AR')} [${p.estado}]`, 30, y, { width: doc.page.width - 60 });
+      y = doc.y + 4;
+    });
+    y += 10;
+    doc.fillColor(DORADO).fontSize(9).font('Helvetica-Bold').text('RECIBOS / PAGOS', 30, y);
+    y += 14;
+    (recibos || []).forEach((r) => {
+      doc.fillColor(NEGRO).fontSize(8.5).font('Helvetica').text(`${new Date(r.creado_en).toLocaleDateString('es-AR')} - ${r.concepto} - $${Number(r.monto).toLocaleString('es-AR')}`, 30, y, { width: doc.page.width - 60 });
+      y = doc.y + 4;
+    });
+    piePagina(doc);
+  });
+}
+
+async function generarBitacora({ titulo, trabajos }) {
+  return generarPDFBuffer((doc) => {
+    let y = encabezado(doc, titulo, '—', new Date().toLocaleDateString('es-AR'));
+    (trabajos || []).forEach((t) => {
+      doc.fillColor(DORADO).fontSize(8.5).font('Helvetica-Bold').text(`${t.fecha} - ${t.clientes?.nombre || 'Cliente'}`, 30, y);
+      y = doc.y + 2;
+      doc.fillColor(NEGRO).fontSize(8.5).font('Helvetica').text(t.descripcion, 30, y, { width: doc.page.width - 60 });
+      y = doc.y + 8;
+    });
+    piePagina(doc);
+  });
+}
+
+module.exports = { generarRecibo, generarPresupuesto, generarDocumentoLibre, generarExtracto, generarBitacora };
