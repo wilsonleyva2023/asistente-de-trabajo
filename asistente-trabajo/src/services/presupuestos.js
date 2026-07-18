@@ -183,6 +183,16 @@ async function historialCompleto(cliente_id) {
   return data;
 }
 
+async function listarTodos() {
+  const { data, error } = await supabase
+    .from('presupuestos')
+    .select('*, clientes(nombre)')
+    .eq('archivado', false)
+    .order('fecha_creacion', { ascending: false });
+  if (error) throw error;
+  return data;
+}
+
 module.exports = {
   crearPresupuesto,
   obtenerItems,
@@ -199,4 +209,5 @@ module.exports = {
   ultimoArchivado,
   presupuestosArchivados,
   historialCompleto,
+  listarTodos,
 };
