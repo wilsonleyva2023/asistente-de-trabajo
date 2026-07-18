@@ -262,7 +262,18 @@ async function ejecutarHerramienta(ctx, nombre, args) {
       if (!cliente) return { error: `No encontré ningún cliente llamado "${args.cliente_nombre}". Sugerile cargarlo primero.` };
       if (cliente.multiple) return { error: `Hay varios clientes parecidos: ${cliente.nombres.join(', ')}. Preguntale al usuario cuál es exactamente.` };
       await presupuestos.crearPresupuesto({ cliente_id: cliente.id, descripcion: args.descripcion, monto: args.monto });
-      const buffer = await pdf.generarPresupuesto({ cliente, descripcion: args.descripcion, monto: args.monto });
+      const buffer = await pdf.generarPresupuesto({
+        cliente,
+        descripcion: args.descripcion,
+        monto: args.monto,
+        direccionTrabajo: args.direccion_trabajo,
+        alcance: args.alcance_texto,
+        incluirAlcance: args.incluir_alcance !== false,
+        garantia: args.garantia_texto,
+        incluirGarantia: args.incluir_garantia !== false,
+        formaPago: args.forma_pago_texto,
+        incluirFormaPago: args.incluir_forma_pago !== false,
+      });
       await enviarDocumentoConReintento(ctx, { source: buffer, filename: `presupuesto-${cliente.nombre}.pdf` });
       return { ok: true, mensaje: 'Presupuesto creado y PDF enviado.' };
     }
@@ -287,7 +298,18 @@ async function ejecutarHerramienta(ctx, nombre, args) {
       if (cliente.multiple) return { error: `Hay varios clientes parecidos: ${cliente.nombres.join(', ')}. Preguntale cuál es.` };
       const ultimo = await presupuestos.obtenerUltimoPresupuesto(cliente.id);
       if (!ultimo) return { error: `${cliente.nombre} no tiene presupuestos guardados.` };
-      const buffer = await pdf.generarPresupuesto({ cliente, descripcion: ultimo.descripcion, monto: ultimo.monto });
+      const buffer = await pdf.generarPresupuesto({
+        cliente,
+        descripcion: ultimo.descripcion,
+        monto: ultimo.monto,
+        direccionTrabajo: args.direccion_trabajo,
+        alcance: args.alcance_texto,
+        incluirAlcance: args.incluir_alcance !== false,
+        garantia: args.garantia_texto,
+        incluirGarantia: args.incluir_garantia !== false,
+        formaPago: args.forma_pago_texto,
+        incluirFormaPago: args.incluir_forma_pago !== false,
+      });
       await enviarDocumentoConReintento(ctx, { source: buffer, filename: `presupuesto-${cliente.nombre}.pdf` });
       return { ok: true };
     }
