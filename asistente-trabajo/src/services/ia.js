@@ -16,7 +16,10 @@ Reglas de comportamiento:
 - Si el pedido no encaja con ninguna herramienta (ej: una pregunta técnica, un cálculo, un consejo), respondé vos directamente, de forma útil y breve, sin decir "no entendí" — solo decí eso si genuinamente no tenés idea de qué te están pidiendo.
 - Para guardar listas de materiales, apuntes o ideas sueltas que no son de un cliente puntual, usá guardar_nota.
 - Para pedidos de un documento en PDF con contenido libre (que no sea presupuesto ni recibo), usá generar_documento.
+- IMPORTANTE: antes de usar eliminar_presupuesto o eliminar_cobro, primero preguntale al usuario "¿Confirmás que querés borrar [lo que sea]? No se puede deshacer." y esperá a que te diga que sí en un mensaje siguiente. Nunca borres sin esa confirmación explícita del usuario en la conversación.
 - Nunca inventes datos de clientes, montos o fechas que el usuario no te dio.
+- Si te preguntan qué podés hacer, o para qué servís, respondé de forma natural y cálida (no como un menú de comandos): agrupá tus capacidades en unas pocas categorías con tus palabras (ej: gestión de clientes y presupuestos, recordatorios y agenda, notas y listas, documentos en PDF) y dales 1-2 ejemplos concretos de cómo pedírtelo hablando normal. Si te preguntan por una función en particular con más profundidad, explicásela con más detalle y ejemplos de uso real.
+- Si el usuario te dice algo como "hagamos un ejemplo", "dame un ejemplo", "mostrame cómo sería", respondé con un ejemplo concreto e inventado (aclarando que es de ejemplo) mostrando cómo quedaría, en vez de solo explicar en abstracto.
 - Fecha y hora actuales: ${new Date().toISOString()}`;
 
 const HERRAMIENTAS = [
@@ -155,6 +158,16 @@ const HERRAMIENTAS = [
           required: ['titulo', 'contenido'],
         },
       },
+      {
+        name: 'eliminar_presupuesto',
+        description: 'Borra el presupuesto más reciente de un cliente. SOLO usar después de que el usuario confirmó explícitamente que quiere borrarlo.',
+        parameters: { type: 'OBJECT', properties: { cliente_nombre: { type: 'STRING' } }, required: ['cliente_nombre'] },
+      },
+      {
+        name: 'eliminar_cobro',
+        description: 'Borra un cobro/deuda pendiente de un cliente. SOLO usar después de que el usuario confirmó explícitamente que quiere borrarlo.',
+        parameters: { type: 'OBJECT', properties: { cliente_nombre: { type: 'STRING' } }, required: ['cliente_nombre'] },
+      },
     ],
   },
 ];
@@ -187,20 +200,24 @@ async function llamarGemini(contents) {
 // Conversa con Gemini, ejecutando herramientas hasta llegar a una respuesta final en texto.
 // `historial` es un array de turnos {role, parts} que se va actualizando.
 // `ejecutor` es una función async (nombre, args) => objeto de resultado.
-async function conversar(historial, mensajeUsuario, ejecutor) {
-  historial.push({ role: 'user', parts: [{ text: mensajeUsuario }] });
+async function conversar(historialCompartido, mensajeUsuario, ejecutor) {
+  // Trabajamos sobre una copia temporal: si algo falla a mitad de camino,
+  // el historial real de la charla no queda corrupto.
+  const borrador = [...historialCompartido, { role: 'user', parts: [{ text: mensajeUsuario }] }];
 
   for (let i = 0; i < 5; i++) {
-    const contenidoModelo = await llamarGemini(historial);
+    const contenidoModelo = await llamarGemini(borrador);
     const llamadasFuncion = (contenidoModelo.parts || []).filter((p) => p.functionCall);
 
     if (!llamadasFuncion.length) {
       const texto = (contenidoModelo.parts || []).map((p) => p.text).filter(Boolean).join('\n');
-      historial.push({ role: 'model', parts: contenidoModelo.parts });
+      borrador.push({ role: 'model', parts: contenidoModelo.parts });
+      historialCompartido.length = 0;
+      historialCompartido.push(...borrador);
       return texto || 'Listo.';
     }
 
-    historial.push({ role: 'model', parts: contenidoModelo.parts });
+    borrador.push({ role: 'model', parts: contenidoModelo.parts });
 
     const respuestasFuncion = [];
     for (const llamada of llamadasFuncion) {
@@ -214,7 +231,7 @@ async function conversar(historial, mensajeUsuario, ejecutor) {
         functionResponse: { name: llamada.functionCall.name, response: resultado },
       });
     }
-    historial.push({ role: 'user', parts: respuestasFuncion });
+    borrador.push({ role: 'user', parts: respuestasFuncion });
   }
 
   return 'Se complicó un poco encadenar todo eso, ¿podés pedírmelo de nuevo más simple?';
