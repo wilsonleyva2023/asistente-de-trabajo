@@ -11,6 +11,7 @@ async function crearPresupuesto({ cliente_id, descripcion, monto }) {
 }
 
 async function cambiarEstado(id, estado) {
+  // estado: pendiente | aceptado | rechazado | no_concretado
   const { data, error } = await supabase
     .from('presupuestos')
     .update({ estado, fecha_ultimo_contacto: new Date().toISOString() })
@@ -21,6 +22,8 @@ async function cambiarEstado(id, estado) {
   return data;
 }
 
+// Presupuestos que quedaron pendientes hace más de X días sin novedades,
+// para recontactar al cliente
 async function presupuestosParaRecontactar(diasSinContacto = 7) {
   const limite = new Date();
   limite.setDate(limite.getDate() - diasSinContacto);
@@ -67,4 +70,9 @@ async function obtenerPresupuestosPorCliente(cliente_id) {
   return data;
 }
 
-module.exports = { crearPresupuesto, cambiarEstado, presupuestosParaRecontactar, obtenerUltimoPresupuesto, actualizarPresupuesto, obtenerPresupuestosPorCliente };
+async function eliminarPresupuesto(id) {
+  const { error } = await supabase.from('presupuestos').delete().eq('id', id);
+  if (error) throw error;
+}
+
+module.exports = { crearPresupuesto, cambiarEstado, presupuestosParaRecontactar, obtenerUltimoPresupuesto, actualizarPresupuesto, obtenerPresupuestosPorCliente, eliminarPresupuesto };
