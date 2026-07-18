@@ -2,7 +2,7 @@
 // qué querés hacer, sin necesidad de comandos exactos.
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const MODELO = 'gemini-2.5-flash';
+const MODELO = 'gemini-3.1-flash-lite';
 const URL_API = `https://generativelanguage.googleapis.com/v1beta/models/${MODELO}:generateContent?key=${GEMINI_API_KEY}`;
 
 const INSTRUCCIONES = `
