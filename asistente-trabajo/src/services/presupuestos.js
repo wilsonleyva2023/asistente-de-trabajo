@@ -1,17 +1,78 @@
 const { supabase } = require('../db');
 
-async function crearPresupuesto({ cliente_id, descripcion, monto }) {
-  const { data, error } = await supabase
+// items: [{ descripcion, monto }, ...]
+async function crearPresupuesto({ cliente_id, items, descripcion, monto }) {
+  // Compatibilidad: si viene descripcion+monto sueltos (sin items), se arma un solo ítem.
+  const listaItems = items && items.length ? items : [{ descripcion, monto }];
+  const totalMonto = listaItems.reduce((acc, i) => acc + Number(i.monto || 0), 0);
+  const descripcionGeneral = listaItems.map((i) => i.descripcion).join(' + ');
+
+  const { data: presupuesto, error } = await supabase
     .from('presupuestos')
-    .insert([{ cliente_id, descripcion, monto, estado: 'pendiente' }])
+    .insert([{ cliente_id, descripcion: descripcionGeneral, monto: totalMonto, estado: 'pendiente' }])
     .select()
     .single();
+  if (error) throw error;
+
+  const { data: itemsGuardados, error: errorItems } = await supabase
+    .from('presupuesto_items')
+    .insert(listaItems.map((i) => ({ presupuesto_id: presupuesto.id, descripcion: i.descripcion, monto: i.monto })))
+    .select();
+  if (errorItems) throw errorItems;
+
+  return { ...presupuesto, items: itemsGuardados };
+}
+
+async function obtenerItems(presupuesto_id) {
+  const { data, error } = await supabase
+    .from('presupuesto_items')
+    .select('*')
+    .eq('presupuesto_id', presupuesto_id)
+    .eq('archivado', false)
+    .order('creado_en', { ascending: true });
   if (error) throw error;
   return data;
 }
 
+// Borra ítems puntuales de un presupuesto (temporal por defecto) y recalcula el total.
+async function quitarItems(presupuesto_id, itemIds, permanente = false) {
+  if (permanente) {
+    const { error } = await supabase.from('presupuesto_items').delete().in('id', itemIds);
+    if (error) throw error;
+  } else {
+    const { error } = await supabase.from('presupuesto_items').update({ archivado: true }).in('id', itemIds);
+    if (error) throw error;
+  }
+  const itemsRestantes = await obtenerItems(presupuesto_id);
+  const nuevoTotal = itemsRestantes.reduce((acc, i) => acc + Number(i.monto), 0);
+  const nuevaDescripcion = itemsRestantes.map((i) => i.descripcion).join(' + ') || '(sin ítems)';
+  const { data, error: errorUpd } = await supabase
+    .from('presupuestos')
+    .update({ monto: nuevoTotal, descripcion: nuevaDescripcion, fecha_ultimo_contacto: new Date().toISOString() })
+    .eq('id', presupuesto_id)
+    .select()
+    .single();
+  if (errorUpd) throw errorUpd;
+  return { presupuesto: data, items: itemsRestantes };
+}
+
+async function agregarItems(presupuesto_id, items) {
+  const { error } = await supabase.from('presupuesto_items').insert(items.map((i) => ({ presupuesto_id, descripcion: i.descripcion, monto: i.monto })));
+  if (error) throw error;
+  const itemsActuales = await obtenerItems(presupuesto_id);
+  const nuevoTotal = itemsActuales.reduce((acc, i) => acc + Number(i.monto), 0);
+  const nuevaDescripcion = itemsActuales.map((i) => i.descripcion).join(' + ');
+  const { data, error: errorUpd } = await supabase
+    .from('presupuestos')
+    .update({ monto: nuevoTotal, descripcion: nuevaDescripcion, fecha_ultimo_contacto: new Date().toISOString() })
+    .eq('id', presupuesto_id)
+    .select()
+    .single();
+  if (errorUpd) throw errorUpd;
+  return { presupuesto: data, items: itemsActuales };
+}
+
 async function cambiarEstado(id, estado) {
-  // estado: pendiente | aceptado | rechazado | no_concretado
   const { data, error } = await supabase
     .from('presupuestos')
     .update({ estado, fecha_ultimo_contacto: new Date().toISOString() })
@@ -22,14 +83,13 @@ async function cambiarEstado(id, estado) {
   return data;
 }
 
-// Presupuestos que quedaron pendientes hace más de X días sin novedades,
-// para recontactar al cliente
 async function presupuestosParaRecontactar(diasSinContacto = 7) {
   const limite = new Date();
   limite.setDate(limite.getDate() - diasSinContacto);
   const { data, error } = await supabase
     .from('presupuestos')
     .select('*, clientes(nombre, telefono)')
+    .eq('archivado', false)
     .in('estado', ['pendiente', 'no_concretado'])
     .lt('fecha_ultimo_contacto', limite.toISOString())
     .order('fecha_ultimo_contacto', { ascending: true });
@@ -40,8 +100,9 @@ async function presupuestosParaRecontactar(diasSinContacto = 7) {
 async function obtenerUltimoPresupuesto(cliente_id) {
   const { data, error } = await supabase
     .from('presupuestos')
-    .select('*')
+    .select('*, presupuesto_items(*)')
     .eq('cliente_id', cliente_id)
+    .eq('archivado', false)
     .order('fecha_creacion', { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -63,16 +124,59 @@ async function actualizarPresupuesto(id, cambios) {
 async function obtenerPresupuestosPorCliente(cliente_id) {
   const { data, error } = await supabase
     .from('presupuestos')
-    .select('*')
+    .select('*, presupuesto_items(*)')
     .eq('cliente_id', cliente_id)
+    .eq('archivado', false)
     .order('fecha_creacion', { ascending: false });
   if (error) throw error;
   return data;
 }
 
-async function eliminarPresupuesto(id) {
+// Borrado temporal: se archiva, no aparece en listas normales, se puede restaurar.
+async function archivarPresupuesto(id) {
+  const { data, error } = await supabase.from('presupuestos').update({ archivado: true }).eq('id', id).select().single();
+  if (error) throw error;
+  return data;
+}
+
+async function restaurarPresupuesto(id) {
+  const { data, error } = await supabase.from('presupuestos').update({ archivado: false }).eq('id', id).select().single();
+  if (error) throw error;
+  return data;
+}
+
+// Borrado definitivo: no se puede deshacer.
+async function eliminarPresupuestoPermanente(id) {
   const { error } = await supabase.from('presupuestos').delete().eq('id', id);
   if (error) throw error;
 }
 
-module.exports = { crearPresupuesto, cambiarEstado, presupuestosParaRecontactar, obtenerUltimoPresupuesto, actualizarPresupuesto, obtenerPresupuestosPorCliente, eliminarPresupuesto };
+// Para poder "restaurar el último que borré"
+async function ultimoArchivado(cliente_id) {
+  const { data, error } = await supabase
+    .from('presupuestos')
+    .select('*')
+    .eq('cliente_id', cliente_id)
+    .eq('archivado', true)
+    .order('fecha_ultimo_contacto', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
+module.exports = {
+  crearPresupuesto,
+  obtenerItems,
+  quitarItems,
+  agregarItems,
+  cambiarEstado,
+  presupuestosParaRecontactar,
+  obtenerUltimoPresupuesto,
+  actualizarPresupuesto,
+  obtenerPresupuestosPorCliente,
+  archivarPresupuesto,
+  restaurarPresupuesto,
+  eliminarPresupuestoPermanente,
+  ultimoArchivado,
+};
