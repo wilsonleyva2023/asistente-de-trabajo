@@ -36,9 +36,11 @@ AGENDA Y VISITAS (agendar_trabajo, no crear_recordatorio, cuando sea una visita 
 - Cuando el usuario diga que terminó un trabajo agendado, usá completar_visita — y ofrecele registrar el trabajo realizado y/o generar el recibo en el mismo intercambio.
 - Cuando diga que tiene que volver otro día, usá reagendar_visita con la nueva fecha.
 - consultar_agenda acepta un rango: "hoy", "manana", o "semana". Si no aclara, asumí "hoy".
+- consultar_agenda y consultar_recordatorios te devuelven los datos en crudo (no los mandan al chat ellos solos) — con esos datos armá VOS la respuesta final, organizada por día, clara y fácil de leer, mencionando el presupuesto de cada visita si lo tiene. Si el usuario no aclaró el rango, o pide "mi agenda" en general, usá "semana" por defecto (no "hoy"), y llamá tanto a consultar_agenda como a consultar_recordatorios para no dejar nada afuera.
 - Antes de agendar, si hay otra visita muy cerca en el horario, el sistema te va a avisar del choque — contáselo al usuario y preguntale si sigue igual o cambia el horario.
 
-RECORDATORIOS: para avisos generales que NO son una visita a un cliente (ej: "recordame pagar el monotributo"). Se pueden editar y eliminar buscando por el texto.
+RECORDATORIOS: para avisos generales que NO son una visita a un cliente (ej: "recordame pagar el monotributo", "ir al doctor"). Se pueden editar y eliminar buscando por el texto, y consultar por rango con consultar_recordatorios.
+- MUY IMPORTANTE: cuando el usuario pregunte de forma general "qué tengo hoy/mañana/esta semana" o "mi agenda", sin aclarar si se refiere solo a trabajos con clientes, llamá TANTO a consultar_agenda COMO a consultar_recordatorios con el mismo rango, para no dejar afuera nada de lo que agendó (visitas a clientes Y recordatorios sueltos). Se muestran en mensajes separados, no hace falta mezclarlos en un solo texto.
 
 BORRAR: TEMPORAL VS. DEFINITIVO:
 - Por defecto, borrar es TEMPORAL (se archiva, se puede restaurar). Solo permanente=true si el usuario lo pide explícitamente ("para siempre", "definitivamente").
@@ -204,6 +206,11 @@ const HERRAMIENTAS = [
         parameters: { type: 'OBJECT', properties: { cliente_nombre: CNOM }, required: ['cliente_nombre'] },
       },
       {
+        name: 'listar_presupuestos',
+        description: 'Lista TODOS los presupuestos activos guardados (de cualquier cliente y estado), no solo los que hay que recontactar.',
+        parameters: { type: 'OBJECT', properties: {} },
+      },
+      {
         name: 'listar_presupuestos_archivados',
         description: 'Lista los presupuestos borrados temporalmente. Solo si el usuario lo pide explícitamente.',
         parameters: { type: 'OBJECT', properties: {} },
@@ -330,6 +337,11 @@ const HERRAMIENTAS = [
         name: 'crear_recordatorio',
         description: 'Crea un recordatorio general (no una visita a cliente) con fecha y hora.',
         parameters: { type: 'OBJECT', properties: { texto: { type: 'STRING' }, fecha_hora_iso: { type: 'STRING' } }, required: ['texto', 'fecha_hora_iso'] },
+      },
+      {
+        name: 'consultar_recordatorios',
+        description: "Muestra los recordatorios generales (no visitas a clientes) en un rango. rango puede ser 'hoy', 'manana' o 'semana'.",
+        parameters: { type: 'OBJECT', properties: { rango: { type: 'STRING' } } },
       },
       {
         name: 'editar_recordatorio',
