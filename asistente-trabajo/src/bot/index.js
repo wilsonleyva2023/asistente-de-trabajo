@@ -1,4 +1,5 @@
 const { Telegraf, Markup } = require('telegraf');
+const https = require('https');
 const session = require('./session');
 const clientes = require('../services/clientes');
 const presupuestos = require('../services/presupuestos');
@@ -9,7 +10,13 @@ const notas = require('../services/notas');
 const pdf = require('../services/pdf');
 const ia = require('../services/ia');
 
-const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN);
+// keepAlive: false evita "socket hang up" al reutilizar conexiones que
+// el servidor ya cerró (común en hosting gratuito como Render).
+const agenteSinKeepAlive = new https.Agent({ keepAlive: false });
+
+const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN, {
+  telegram: { agent: agenteSinKeepAlive },
+});
 
 bot.use((ctx, next) => {
   const permitido = process.env.TELEGRAM_CHAT_ID_PERMITIDO;
