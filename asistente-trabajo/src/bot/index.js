@@ -279,6 +279,33 @@ async function resolverClienteConPresupuesto(args) {
 
 async function ejecutarHerramienta(ctx, nombre, args) {
   switch (nombre) {
+    case 'editar_cliente': {
+      const cliente = await resolverCliente(args);
+      if (!cliente) return errorClienteNoEncontrado(args.cliente_nombre);
+      if (cliente.multiple) return errorClienteAmbiguo(cliente.opciones);
+      const cambios = {};
+      if (args.nuevo_nombre) cambios.nombre = args.nuevo_nombre;
+      if (args.nuevo_telefono) cambios.telefono = args.nuevo_telefono;
+      if (args.nueva_direccion) cambios.direccion = args.nueva_direccion;
+      if (args.nuevo_apodo) cambios.apodo = args.nuevo_apodo;
+      if (args.nuevas_notas) cambios.notas = args.nuevas_notas;
+      if (!Object.keys(cambios).length) return { error: 'No se especificó qué corregir.' };
+      const actualizado = await clientes.actualizarCliente(cliente.id, cambios);
+      return { ok: true, cliente: { nombre: actualizado.nombre, direccion: actualizado.direccion, telefono: actualizado.telefono }, cliente_id: actualizado.id };
+    }
+
+    case 'eliminar_cliente': {
+      const cliente = await resolverCliente(args);
+      if (!cliente) return errorClienteNoEncontrado(args.cliente_nombre);
+      if (cliente.multiple) return errorClienteAmbiguo(cliente.opciones);
+      if (args.permanente) {
+        await clientes.eliminarClientePermanente(cliente.id);
+        return { ok: true, mensaje: `Cliente ${cliente.nombre} borrado definitivamente, no se puede recuperar.` };
+      }
+      await clientes.archivarCliente(cliente.id);
+      return { ok: true, mensaje: `Cliente ${cliente.nombre} borrado (se puede restaurar si hace falta).` };
+    }
+
     case 'buscar_cliente': {
       const encontrados = await clientes.buscarClientesPorNombre(args.nombre || '');
       if (!encontrados.length) return { encontrado: false };
