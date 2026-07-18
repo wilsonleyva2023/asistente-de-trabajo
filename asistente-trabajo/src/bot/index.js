@@ -83,11 +83,9 @@ bot.command('recontactar', (ctx) => enviarRecontactar(ctx));
 bot.command('agenda', async (ctx) => enviarAgendaDelDia(ctx.chat.id));
 
 // ---------- Router principal de texto ----------
-bot.on('text', async (ctx) => {
+async function procesarTexto(ctx, texto) {
   const estado = session.get(ctx.chat.id);
-  const texto = ctx.message.text.trim();
 
-  // Si está en medio de un flujo guiado (comando paso a paso), seguimos ese flujo
   if (estado) {
     try {
       switch (estado.flujo) {
@@ -124,7 +122,6 @@ bot.on('text', async (ctx) => {
     return;
   }
 
-  // Si no hay ningún flujo activo, interpretamos el mensaje con IA
   try {
     await ctx.sendChatAction('typing');
     const resultado = await ia.interpretarMensaje(texto);
@@ -133,7 +130,12 @@ bot.on('text', async (ctx) => {
     console.error('Error interpretando con IA:', err);
     ctx.reply('No pude entender bien ese mensaje. Podés probar de nuevo con otras palabras, o usar /ayuda para ver los comandos guiados.');
   }
+}
+
+bot.on('text', async (ctx) => {
+  await procesarTexto(ctx, ctx.message.text.trim());
 });
+
 // ---------- Mensajes de voz ----------
 bot.on('voice', async (ctx) => {
   try {
@@ -143,8 +145,9 @@ bot.on('voice', async (ctx) => {
     const resp = await fetch(url);
     const arrayBuffer = await resp.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
-    const resultado = await ia.interpretarAudio(buffer, 'audio/ogg');
-    await ejecutarAccionIA(ctx, resultado);
+    const texto = await ia.transcribirAudio(buffer, 'audio/ogg');
+    await ctx.reply(`🎙️ Entendí: "${texto}"`);
+    await procesarTexto(ctx, texto);
   } catch (err) {
     console.error('Error interpretando audio:', err);
     ctx.reply('No pude entender ese audio. Probá de nuevo o escribilo por texto.');
