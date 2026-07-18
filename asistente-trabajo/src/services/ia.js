@@ -47,13 +47,21 @@ const HERRAMIENTAS = [
       },
       {
         name: 'crear_presupuesto',
-        description: 'Crea un presupuesto nuevo para un cliente y genera el PDF automáticamente.',
+        description:
+          'Crea un presupuesto nuevo para un cliente y genera el PDF automáticamente. Por defecto incluye las secciones de alcance/exclusiones, garantía y forma de pago con el texto estándar del usuario, pero podés personalizarlas u omitirlas si el usuario lo pide explícitamente.',
         parameters: {
           type: 'OBJECT',
           properties: {
             cliente_nombre: { type: 'STRING' },
             descripcion: { type: 'STRING' },
             monto: { type: 'NUMBER' },
+            direccion_trabajo: { type: 'STRING', description: 'Solo si el usuario da una dirección distinta a la registrada del cliente para este trabajo puntual.' },
+            alcance_texto: { type: 'STRING', description: 'Texto personalizado para "Alcance y exclusiones", si el usuario pide cambiarlo.' },
+            incluir_alcance: { type: 'BOOLEAN', description: 'Poné false si el usuario pide sacar esa sección del PDF.' },
+            garantia_texto: { type: 'STRING', description: 'Texto personalizado para "Garantía del servicio", si el usuario pide cambiarlo.' },
+            incluir_garantia: { type: 'BOOLEAN', description: 'Poné false si el usuario pide sacar esa sección del PDF.' },
+            forma_pago_texto: { type: 'STRING', description: 'Texto personalizado para "Forma de pago", si el usuario pide cambiarlo (ej: sin anticipo, pago total al finalizar, etc).' },
+            incluir_forma_pago: { type: 'BOOLEAN', description: 'Poné false si el usuario pide sacar esa sección del PDF.' },
           },
           required: ['cliente_nombre', 'descripcion', 'monto'],
         },
@@ -73,8 +81,22 @@ const HERRAMIENTAS = [
       },
       {
         name: 'reenviar_presupuesto',
-        description: 'Vuelve a generar y enviar el PDF del presupuesto más reciente de un cliente, sin crear uno nuevo.',
-        parameters: { type: 'OBJECT', properties: { cliente_nombre: { type: 'STRING' } }, required: ['cliente_nombre'] },
+        description:
+          'Vuelve a generar y enviar el PDF del presupuesto más reciente de un cliente, sin crear uno nuevo. Si el usuario pide cambios en el formato (omitir o cambiar alcance/garantía/forma de pago, agregar una dirección distinta), aplicalos también acá.',
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            cliente_nombre: { type: 'STRING' },
+            direccion_trabajo: { type: 'STRING' },
+            alcance_texto: { type: 'STRING' },
+            incluir_alcance: { type: 'BOOLEAN' },
+            garantia_texto: { type: 'STRING' },
+            incluir_garantia: { type: 'BOOLEAN' },
+            forma_pago_texto: { type: 'STRING' },
+            incluir_forma_pago: { type: 'BOOLEAN' },
+          },
+          required: ['cliente_nombre'],
+        },
       },
       {
         name: 'crear_recibo',
