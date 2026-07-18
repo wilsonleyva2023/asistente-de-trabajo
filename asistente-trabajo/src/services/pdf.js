@@ -155,6 +155,7 @@ const TEXTO_FORMA_PAGO_DEFECTO = 'Se requiere un anticipo del 50% del total para
 
 async function generarPresupuesto({
   cliente,
+  items,
   descripcion,
   monto,
   numero = '0001',
@@ -166,11 +167,12 @@ async function generarPresupuesto({
   formaPago,
   incluirFormaPago = true,
 }) {
+  const listaItems = items && items.length ? items : [{ descripcion, monto }];
   return generarPDFBuffer((doc) => {
     let y = encabezado(doc, 'Presupuesto', numero, new Date().toLocaleDateString('es-AR'));
     const clienteMostrado = direccionTrabajo ? { ...cliente, direccion: direccionTrabajo } : cliente;
     y = datosCliente(doc, y, clienteMostrado);
-    const { y: y2, total } = tablaItems(doc, y, [{ descripcion, monto }]);
+    const { y: y2, total } = tablaItems(doc, y, listaItems);
     y = totalFinal(doc, y2, total);
     if (incluirAlcance) {
       y = bloqueTexto(doc, y, 'ALCANCE Y EXCLUSIONES', alcance || TEXTO_ALCANCE_DEFECTO);
