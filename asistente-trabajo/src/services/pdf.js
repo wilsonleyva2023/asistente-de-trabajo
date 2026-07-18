@@ -147,25 +147,40 @@ function piePagina(doc) {
   }
 }
 
-async function generarPresupuesto({ cliente, descripcion, monto, numero = '0001' }) {
+const TEXTO_ALCANCE_DEFECTO =
+  'Este presupuesto cubre exclusivamente las tareas detalladas. Todo trabajo, reparación, repuesto o material adicional solicitado fuera de este documento será cotizado y cobrado por separado, previa autorización del cliente.';
+const TEXTO_GARANTIA_DEFECTO =
+  'De acuerdo con la Ley N° 24.240 de Defensa del Consumidor, la mano de obra cuenta con una garantía de 90 días corridos desde la finalización del servicio, cubriendo defectos derivados de la ejecución del trabajo aquí detallado.';
+const TEXTO_FORMA_PAGO_DEFECTO = 'Se requiere un anticipo del 50% del total para iniciar los trabajos. El 50% restante se abona al finalizar el servicio.';
+
+async function generarPresupuesto({
+  cliente,
+  descripcion,
+  monto,
+  numero = '0001',
+  direccionTrabajo,
+  alcance,
+  incluirAlcance = true,
+  garantia,
+  incluirGarantia = true,
+  formaPago,
+  incluirFormaPago = true,
+}) {
   return generarPDFBuffer((doc) => {
     let y = encabezado(doc, 'Presupuesto', numero, new Date().toLocaleDateString('es-AR'));
-    y = datosCliente(doc, y, cliente);
+    const clienteMostrado = direccionTrabajo ? { ...cliente, direccion: direccionTrabajo } : cliente;
+    y = datosCliente(doc, y, clienteMostrado);
     const { y: y2, total } = tablaItems(doc, y, [{ descripcion, monto }]);
     y = totalFinal(doc, y2, total);
-    y = bloqueTexto(
-      doc,
-      y,
-      'ALCANCE Y EXCLUSIONES',
-      'Este presupuesto cubre exclusivamente las tareas detalladas. Todo trabajo, reparación, repuesto o material adicional solicitado fuera de este documento será cotizado y cobrado por separado, previa autorización del cliente.'
-    );
-    y = bloqueTexto(
-      doc,
-      y,
-      'GARANTÍA DEL SERVICIO',
-      'De acuerdo con la Ley N° 24.240 de Defensa del Consumidor, la mano de obra cuenta con una garantía de 90 días corridos desde la finalización del servicio, cubriendo defectos derivados de la ejecución del trabajo aquí detallado.'
-    );
-    bloqueTexto(doc, y, 'FORMA DE PAGO', 'Se requiere un anticipo del 50% del total para iniciar los trabajos. El 50% restante se abona al finalizar el servicio.');
+    if (incluirAlcance) {
+      y = bloqueTexto(doc, y, 'ALCANCE Y EXCLUSIONES', alcance || TEXTO_ALCANCE_DEFECTO);
+    }
+    if (incluirGarantia) {
+      y = bloqueTexto(doc, y, 'GARANTÍA DEL SERVICIO', garantia || TEXTO_GARANTIA_DEFECTO);
+    }
+    if (incluirFormaPago) {
+      bloqueTexto(doc, y, 'FORMA DE PAGO', formaPago || TEXTO_FORMA_PAGO_DEFECTO);
+    }
     piePagina(doc);
   });
 }
