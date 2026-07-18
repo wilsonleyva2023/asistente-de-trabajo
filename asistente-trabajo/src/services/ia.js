@@ -29,6 +29,7 @@ BORRAR: TEMPORAL VS. DEFINITIVO (muy importante):
 - SIEMPRE preguntá "¿confirmás?" antes de borrar algo (temporal o definitivo), y esperá la respuesta del usuario en un mensaje siguiente antes de ejecutar la herramienta. Si es un borrado DEFINITIVO, remarcá explícitamente que no tiene vuelta atrás antes de pedir la confirmación.
 - Si el usuario pide "recuperar" o "restaurar" algo que borró, usá restaurar_presupuesto o restaurar_cobro (esto solo funciona si el borrado fue temporal).
 - Los presupuestos y cobros borrados (temporal o definitivamente) NUNCA aparecen en búsquedas ni consultas normales. Si el usuario quiere ver específicamente los borrados temporalmente, usá listar_presupuestos_archivados.
+- Cuando el usuario te cuente que un cliente aceptó, rechazó, o no se decidió sobre un presupuesto, usá cambiar_estado_presupuesto para reflejarlo. Esto es importante: si no lo marcás como aceptado o rechazado, el sistema va a seguir sugiriendo recontactar a ese cliente aunque el trabajo ya esté cerrado.
 - Cuando el usuario pida una acción sobre un presupuesto YA EXISTENTE (reenviarlo, editarlo, borrarlo, agregarle o sacarle ítems) y haya varios clientes con ese nombre, el sistema ya filtra automáticamente y solo te va a mostrar como opciones a los que tienen un presupuesto activo en este momento — no le preguntes al usuario sobre clientes que no tengan presupuesto activo, ni le muestres esa lista completa de personas.
 
 Si te preguntan qué podés hacer, o para qué servís, respondé de forma natural y cálida (no como un menú de comandos): agrupá tus capacidades en unas pocas categorías con tus palabras y dales 1-2 ejemplos concretos de cómo pedírtelo hablando normal. Si te preguntan por una función en particular con más profundidad, explicásela con más detalle y ejemplos de uso real. Mencioná que también entendés audios, fotos y documentos adjuntos.
@@ -147,6 +148,20 @@ const HERRAMIENTAS = [
         },
       },
       {
+        name: 'cambiar_estado_presupuesto',
+        description:
+          'Marca el presupuesto activo de un cliente como aceptado, rechazado, o no concretado (sin definir todavía). Usar cuando el usuario cuente que un cliente aceptó, rechazó, o todavía no decidió sobre un trabajo. Un presupuesto "aceptado" deja de aparecer en la lista de recontactar.',
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            cliente_id: { type: 'STRING' },
+            cliente_nombre: { type: 'STRING' },
+            estado: { type: 'STRING', description: "Uno de: 'aceptado', 'rechazado', 'no_concretado'." },
+          },
+          required: ['cliente_nombre', 'estado'],
+        },
+      },
+      {
         name: 'listar_presupuestos_archivados',
         description: 'Muestra la lista de presupuestos borrados temporalmente (que se pueden restaurar). Usar SOLO si el usuario lo pide explícitamente, no aparecen en ninguna otra consulta.',
         parameters: { type: 'OBJECT', properties: {} },
@@ -158,11 +173,17 @@ const HERRAMIENTAS = [
       },
       {
         name: 'crear_recibo',
-        description: 'Genera un recibo de pago en PDF para un cliente.',
+        description:
+          'Genera un recibo de pago en PDF para un cliente. Si el usuario no da concepto o monto, y el cliente tiene un presupuesto activo, se usan automáticamente los datos de ese presupuesto (asumiendo que el recibo es por ese trabajo). Si no hay presupuesto activo y falta algún dato, preguntalo.',
         parameters: {
           type: 'OBJECT',
-          properties: { cliente_id: { type: 'STRING' }, cliente_nombre: { type: 'STRING' }, concepto: { type: 'STRING' }, monto: { type: 'NUMBER' } },
-          required: ['cliente_nombre', 'concepto', 'monto'],
+          properties: {
+            cliente_id: { type: 'STRING' },
+            cliente_nombre: { type: 'STRING' },
+            concepto: { type: 'STRING', description: 'Opcional si hay un presupuesto activo del cliente: se usa su descripción.' },
+            monto: { type: 'NUMBER', description: 'Opcional si hay un presupuesto activo del cliente: se usa su monto total.' },
+          },
+          required: ['cliente_nombre'],
         },
       },
       {
