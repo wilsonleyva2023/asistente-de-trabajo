@@ -227,6 +227,7 @@ async function conversar(historialCompartido, mensajeUsuario, ejecutor, adjuntos
       try {
         resultado = await ejecutor(llamada.functionCall.name, llamada.functionCall.args || {});
       } catch (err) {
+        console.error(`Error ejecutando ${llamada.functionCall.name}:`, err);
         resultado = { error: err.message || 'Error ejecutando la acción.' };
       }
       respuestasFuncion.push({
