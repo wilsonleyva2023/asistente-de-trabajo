@@ -1,50 +1,170 @@
-// Este módulo le manda tu mensaje a Gemini (IA de Google) para que entienda
-// qué querés hacer, sin necesidad de comandos exactos.
+// "Cerebro" del asistente: conversa con Gemini usando herramientas (function calling).
+// En vez de forzar cada mensaje a encajar en una sola acción fija, le damos a Gemini
+// una caja de herramientas y él decide cuál usar (o ninguna, y simplemente responde).
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const MODELO = 'gemini-3.1-flash-lite';
 const URL_API = `https://generativelanguage.googleapis.com/v1beta/models/${MODELO}:generateContent?key=${GEMINI_API_KEY}`;
 
-const INSTRUCCIONES = `
-Sos el intérprete de un asistente de WhatsApp/Telegram para un técnico que trabaja en plomería, gas, electricidad, aire acondicionado y cámaras de seguridad.
-Tu única tarea es leer el mensaje del usuario y devolver un JSON (y SOLO un JSON, sin texto adicional, sin markdown) con la acción que quiere realizar.
+const INSTRUCCION_SISTEMA = `Sos el asistente personal de un técnico argentino que trabaja en plomería, gas, electricidad, aire acondicionado y cámaras de seguridad. Le hablás de tú/vos, en español rioplatense, tono cercano y directo, sin formalismos innecesarios.
 
-Estructura posible de respuesta (elegí una sola "accion"):
+Tu propósito principal es ayudarlo con la gestión de su trabajo día a día: clientes, presupuestos, recibos, trabajos realizados, equipos instalados, recordatorios, cobros y notas sueltas (como listas de materiales).
 
-1. {"accion": "crear_cliente", "nombre": "...", "telefono": "..." o null, "direccion": "..." o null, "notas": "..." o null}
-2. {"accion": "crear_presupuesto", "cliente_nombre": "...", "descripcion": "...", "monto": numero o null}
-3. {"accion": "crear_recibo", "cliente_nombre": "...", "concepto": "...", "monto": numero o null}
-4. {"accion": "registrar_trabajo", "cliente_nombre": "...", "descripcion": "..."}
-5. {"accion": "crear_recordatorio", "texto": "...", "fecha_hora_iso": "YYYY-MM-DDTHH:MM:00" o null}
-6. {"accion": "registrar_equipo", "cliente_nombre": "...", "tipo": "...", "meses_mantenimiento": numero o null, "aviso_automatico": true/false}
-6b. {"accion": "editar_presupuesto", "cliente_nombre": "...", "nuevo_monto": numero o null, "nueva_descripcion": "..." o null}
-7. {"accion": "buscar_cliente", "nombre": "..."}
-8. {"accion": "consultar_pendientes"}
-9. {"accion": "consultar_recontactar"}
-10. {"accion": "consultar_agenda"}
-11. {"accion": "saludo_o_ayuda"}
-12. {"accion": "desconocido"}
+Reglas de comportamiento:
+- Priorizá usar una herramienta cuando el pedido encaje con alguna. No te quedes solo conversando si podés resolverlo con una acción concreta.
+- Si te falta un dato obligatorio para usar una herramienta (ej: no sabés el monto de un presupuesto), preguntáselo primero en vez de inventarlo.
+- Si el pedido no encaja con ninguna herramienta (ej: una pregunta técnica, un cálculo, un consejo), respondé vos directamente, de forma útil y breve, sin decir "no entendí" — solo decí eso si genuinamente no tenés idea de qué te están pidiendo.
+- Para guardar listas de materiales, apuntes o ideas sueltas que no son de un cliente puntual, usá guardar_nota.
+- Para pedidos de un documento en PDF con contenido libre (que no sea presupuesto ni recibo), usá generar_documento.
+- Nunca inventes datos de clientes, montos o fechas que el usuario no te dio.
+- Fecha y hora actuales: ${new Date().toISOString()}`;
 
-Reglas importantes:
-- Usá "editar_presupuesto" cuando el usuario pida corregir, cambiar o actualizar el monto o la descripción de un presupuesto YA CREADO (ej: "cambiá el presupuesto de Juan a 60000", "agregale a la descripción del trabajo de Juan que también incluye cañería"). Si el usuario en cambio quiere CREAR uno nuevo, usá "crear_presupuesto".
-- Si el mensaje no da un dato, poné null (no inventes datos).
-- Para fechas relativas ("mañana", "en 3 días", "el lunes que viene"), calculá la fecha real usando como referencia la fecha de hoy que te paso abajo.
-- Si el usuario solo saluda o pregunta qué podés hacer, usá "saludo_o_ayuda".
-- Si no entendés la intención, usá "desconocido".
-- Respondé ÚNICAMENTE el JSON, nada más.
+const HERRAMIENTAS = [
+  {
+    functionDeclarations: [
+      {
+        name: 'buscar_cliente',
+        description: 'Busca un cliente guardado y muestra su ficha completa (datos, presupuestos, trabajos, cobros).',
+        parameters: { type: 'OBJECT', properties: { nombre: { type: 'STRING' } }, required: ['nombre'] },
+      },
+      {
+        name: 'crear_cliente',
+        description: 'Da de alta un cliente nuevo.',
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            nombre: { type: 'STRING' },
+            telefono: { type: 'STRING' },
+            direccion: { type: 'STRING' },
+            notas: { type: 'STRING' },
+          },
+          required: ['nombre'],
+        },
+      },
+      {
+        name: 'crear_presupuesto',
+        description: 'Crea un presupuesto nuevo para un cliente y genera el PDF automáticamente.',
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            cliente_nombre: { type: 'STRING' },
+            descripcion: { type: 'STRING' },
+            monto: { type: 'NUMBER' },
+          },
+          required: ['cliente_nombre', 'descripcion', 'monto'],
+        },
+      },
+      {
+        name: 'editar_presupuesto',
+        description: 'Corrige el monto y/o la descripción del presupuesto más reciente de un cliente.',
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            cliente_nombre: { type: 'STRING' },
+            nuevo_monto: { type: 'NUMBER' },
+            nueva_descripcion: { type: 'STRING' },
+          },
+          required: ['cliente_nombre'],
+        },
+      },
+      {
+        name: 'reenviar_presupuesto',
+        description: 'Vuelve a generar y enviar el PDF del presupuesto más reciente de un cliente, sin crear uno nuevo.',
+        parameters: { type: 'OBJECT', properties: { cliente_nombre: { type: 'STRING' } }, required: ['cliente_nombre'] },
+      },
+      {
+        name: 'crear_recibo',
+        description: 'Genera un recibo de pago en PDF para un cliente.',
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            cliente_nombre: { type: 'STRING' },
+            concepto: { type: 'STRING' },
+            monto: { type: 'NUMBER' },
+          },
+          required: ['cliente_nombre', 'concepto', 'monto'],
+        },
+      },
+      {
+        name: 'registrar_trabajo',
+        description: 'Registra un trabajo realizado para un cliente (queda en su historial).',
+        parameters: {
+          type: 'OBJECT',
+          properties: { cliente_nombre: { type: 'STRING' }, descripcion: { type: 'STRING' } },
+          required: ['cliente_nombre', 'descripcion'],
+        },
+      },
+      {
+        name: 'registrar_equipo',
+        description: 'Registra un equipo instalado en la casa de un cliente y programa un aviso de mantenimiento futuro.',
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            cliente_nombre: { type: 'STRING' },
+            tipo: { type: 'STRING' },
+            meses_mantenimiento: { type: 'NUMBER' },
+            aviso_automatico: { type: 'BOOLEAN' },
+          },
+          required: ['cliente_nombre', 'tipo'],
+        },
+      },
+      {
+        name: 'crear_recordatorio',
+        description: 'Crea un recordatorio general con fecha y hora.',
+        parameters: {
+          type: 'OBJECT',
+          properties: { texto: { type: 'STRING' }, fecha_hora_iso: { type: 'STRING', description: 'Formato YYYY-MM-DDTHH:MM:00' } },
+          required: ['texto', 'fecha_hora_iso'],
+        },
+      },
+      {
+        name: 'consultar_pendientes',
+        description: 'Muestra los cobros pendientes.',
+        parameters: { type: 'OBJECT', properties: {} },
+      },
+      {
+        name: 'consultar_recontactar',
+        description: 'Muestra presupuestos que no se cerraron y conviene recontactar al cliente.',
+        parameters: { type: 'OBJECT', properties: {} },
+      },
+      {
+        name: 'consultar_agenda',
+        description: 'Muestra la agenda de hoy: recordatorios y mantenimientos.',
+        parameters: { type: 'OBJECT', properties: {} },
+      },
+      {
+        name: 'guardar_nota',
+        description: 'Guarda una nota o lista libre (ej: lista de materiales para comprar, un apunte, una idea) que no pertenece a un cliente puntual.',
+        parameters: {
+          type: 'OBJECT',
+          properties: { titulo: { type: 'STRING' }, contenido: { type: 'STRING' } },
+          required: ['contenido'],
+        },
+      },
+      {
+        name: 'buscar_nota',
+        description: 'Busca una nota o lista guardada anteriormente por título o contenido.',
+        parameters: { type: 'OBJECT', properties: { busqueda: { type: 'STRING' } }, required: ['busqueda'] },
+      },
+      {
+        name: 'generar_documento',
+        description: 'Genera un PDF con tu marca a partir de un título y un contenido libre dictado por el usuario (para documentos que no son presupuesto ni recibo).',
+        parameters: {
+          type: 'OBJECT',
+          properties: { titulo: { type: 'STRING' }, contenido: { type: 'STRING' } },
+          required: ['titulo', 'contenido'],
+        },
+      },
+    ],
+  },
+];
 
-Fecha y hora actuales: {FECHA_ACTUAL}
-`;
-
-async function interpretarMensaje(texto) {
-  const instrucciones = INSTRUCCIONES.replace('{FECHA_ACTUAL}', new Date().toISOString());
-
+async function llamarGemini(contents) {
   const body = {
-    contents: [{ parts: [{ text: `${instrucciones}\n\nMensaje del usuario: "${texto}"` }] }],
-    generationConfig: {
-      responseMimeType: 'application/json',
-      temperature: 0.2,
-    },
+    system_instruction: { parts: [{ text: INSTRUCCION_SISTEMA }] },
+    contents,
+    tools: HERRAMIENTAS,
+    generationConfig: { temperature: 0.3 },
   };
 
   const resp = await fetch(URL_API, {
@@ -59,25 +179,54 @@ async function interpretarMensaje(texto) {
   }
 
   const data = await resp.json();
-  const textoRespuesta = data.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!textoRespuesta) throw new Error('Gemini no devolvió respuesta.');
+  const candidate = data.candidates?.[0];
+  if (!candidate) throw new Error('Gemini no devolvió respuesta.');
+  return candidate.content;
+}
 
-  try {
-    return JSON.parse(textoRespuesta);
-  } catch (e) {
-    throw new Error('No se pudo interpretar la respuesta de Gemini: ' + textoRespuesta);
+// Conversa con Gemini, ejecutando herramientas hasta llegar a una respuesta final en texto.
+// `historial` es un array de turnos {role, parts} que se va actualizando.
+// `ejecutor` es una función async (nombre, args) => objeto de resultado.
+async function conversar(historial, mensajeUsuario, ejecutor) {
+  historial.push({ role: 'user', parts: [{ text: mensajeUsuario }] });
+
+  for (let i = 0; i < 5; i++) {
+    const contenidoModelo = await llamarGemini(historial);
+    const llamadasFuncion = (contenidoModelo.parts || []).filter((p) => p.functionCall);
+
+    if (!llamadasFuncion.length) {
+      const texto = (contenidoModelo.parts || []).map((p) => p.text).filter(Boolean).join('\n');
+      historial.push({ role: 'model', parts: contenidoModelo.parts });
+      return texto || 'Listo.';
+    }
+
+    historial.push({ role: 'model', parts: contenidoModelo.parts });
+
+    const respuestasFuncion = [];
+    for (const llamada of llamadasFuncion) {
+      let resultado;
+      try {
+        resultado = await ejecutor(llamada.functionCall.name, llamada.functionCall.args || {});
+      } catch (err) {
+        resultado = { error: err.message || 'Error ejecutando la acción.' };
+      }
+      respuestasFuncion.push({
+        functionResponse: { name: llamada.functionCall.name, response: resultado },
+      });
+    }
+    historial.push({ role: 'user', parts: respuestasFuncion });
   }
+
+  return 'Se complicó un poco encadenar todo eso, ¿podés pedírmelo de nuevo más simple?';
 }
 
 async function transcribirAudio(bufferAudio, mimeType) {
-  const base64Audio = bufferAudio.toString('base64');
-
   const body = {
     contents: [
       {
         parts: [
           { text: 'Transcribí exactamente lo que se dice en este audio, en español. Respondé ÚNICAMENTE con el texto transcripto, sin comillas, sin explicaciones, sin agregar nada más.' },
-          { inline_data: { mime_type: mimeType, data: base64Audio } },
+          { inline_data: { mime_type: mimeType, data: bufferAudio.toString('base64') } },
         ],
       },
     ],
@@ -101,4 +250,4 @@ async function transcribirAudio(bufferAudio, mimeType) {
   return texto.trim();
 }
 
-module.exports = { interpretarMensaje, transcribirAudio };
+module.exports = { conversar, transcribirAudio };
