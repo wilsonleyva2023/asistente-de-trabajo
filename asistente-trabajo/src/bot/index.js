@@ -5,12 +5,12 @@ const presupuestos = require('../services/presupuestos');
 const cobros = require('../services/cobros');
 const equipos = require('../services/equipos');
 const recordatorios = require('../services/recordatorios');
+const notas = require('../services/notas');
 const pdf = require('../services/pdf');
 const ia = require('../services/ia');
 
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN);
 
-// Solo tu usuario de Telegram puede usar el bot (seguridad básica).
 bot.use((ctx, next) => {
   const permitido = process.env.TELEGRAM_CHAT_ID_PERMITIDO;
   if (permitido && String(ctx.chat?.id) !== String(permitido)) {
@@ -19,15 +19,14 @@ bot.use((ctx, next) => {
   return next();
 });
 
-// ---------- Ayuda ----------
 const TEXTO_AYUDA =
-  'Hola! Soy tu asistente de trabajo. Podés escribirme normal, como "hacele un presupuesto a Juan por instalar un termotanque, 45000 pesos", o usar estos comandos si preferís algo más guiado:\n\n' +
+  'Hola! Soy tu asistente de trabajo. Podés hablarme normal, de lo que necesites: cargar un cliente, hacer un presupuesto, anotar una lista de materiales, lo que sea. También tenés comandos guiados si preferís:\n\n' +
   '/nuevocliente - Cargar un cliente nuevo\n' +
   '/clientes - Buscar un cliente\n' +
   '/presupuesto - Crear un presupuesto\n' +
   '/recibo - Generar un recibo de pago\n' +
   '/trabajo - Registrar un trabajo realizado\n' +
-  '/equipo - Registrar un equipo instalado (para avisos de mantenimiento)\n' +
+  '/equipo - Registrar un equipo instalado\n' +
   '/recordatorio - Crear un recordatorio\n' +
   '/pendientes - Ver cobros pendientes\n' +
   '/recontactar - Ver presupuestos para recontactar\n' +
@@ -42,7 +41,6 @@ bot.command('cancelar', (ctx) => {
   ctx.reply('Listo, cancelado.');
 });
 
-// ---------- Comandos guiados (siguen andando igual que antes) ----------
 bot.command('nuevocliente', (ctx) => {
   session.set(ctx.chat.id, { flujo: 'nuevocliente', paso: 'nombre', datos: {} });
   ctx.reply('¿Nombre del cliente?');
@@ -82,10 +80,12 @@ bot.command('pendientes', (ctx) => enviarPendientes(ctx));
 bot.command('recontactar', (ctx) => enviarRecontactar(ctx));
 bot.command('agenda', async (ctx) => enviarAgendaDelDia(ctx.chat.id));
 
-// ---------- Router principal de texto ----------
+// ================= ROUTER PRINCIPAL =================
+
 async function procesarTexto(ctx, texto) {
   const estado = session.get(ctx.chat.id);
 
+  // Si está en medio de un comando guiado, seguimos ese flujo paso a paso
   if (estado) {
     try {
       switch (estado.flujo) {
@@ -107,9 +107,6 @@ async function procesarTexto(ctx, texto) {
         case 'equipo':
           await pasoEquipo(ctx, estado, texto);
           break;
-        case 'editarpresupuesto':
-          await pasoEditarPresupuesto(ctx, estado, texto);
-          break;
         case 'recordatorio':
           await pasoRecordatorio(ctx, estado, texto);
           break;
@@ -122,13 +119,16 @@ async function procesarTexto(ctx, texto) {
     return;
   }
 
+  // Si no hay ningún comando guiado activo, conversamos libre con la IA (con herramientas)
   try {
     await ctx.sendChatAction('typing');
-    const resultado = await ia.interpretarMensaje(texto);
-    await ejecutarAccionIA(ctx, resultado);
+    const historial = session.obtenerHistorial(ctx.chat.id);
+    const respuesta = await ia.conversar(historial, texto, (nombre, args) => ejecutarHerramienta(ctx, nombre, args));
+    session.podarHistorial(ctx.chat.id);
+    await ctx.reply(respuesta);
   } catch (err) {
-    console.error('Error interpretando con IA:', err);
-    ctx.reply('No pude entender bien ese mensaje. Podés probar de nuevo con otras palabras, o usar /ayuda para ver los comandos guiados.');
+    console.error('Error conversando con IA:', err);
+    ctx.reply('Uy, tuve un problema procesando eso. Probá de nuevo en un momento.');
   }
 }
 
@@ -136,7 +136,6 @@ bot.on('text', async (ctx) => {
   await procesarTexto(ctx, ctx.message.text.trim());
 });
 
-// ---------- Mensajes de voz ----------
 bot.on('voice', async (ctx) => {
   try {
     await ctx.sendChatAction('typing');
@@ -154,182 +153,167 @@ bot.on('voice', async (ctx) => {
   }
 });
 
-// ================= DISPATCHER DE IA =================
+// ================= HERRAMIENTAS QUE LA IA PUEDE USAR =================
 
-async function ejecutarAccionIA(ctx, r) {
-  switch (r.accion) {
-    case 'saludo_o_ayuda':
-      return ctx.reply(TEXTO_AYUDA);
-
-    case 'crear_cliente': {
-      if (!r.nombre) return ctx.reply('¿Cómo se llama el cliente que querés cargar?');
-      const cliente = await clientes.crearCliente({
-        nombre: r.nombre,
-        telefono: r.telefono || null,
-        direccion: r.direccion || null,
-        notas: r.notas || null,
-      });
-      return ctx.reply(`Cliente "${cliente.nombre}" guardado. ✅`);
-    }
-
-    case 'buscar_cliente': {
-      if (!r.nombre) return ctx.reply('¿Qué cliente querés buscar?');
-      const encontrados = await clientes.buscarClientesPorNombre(r.nombre);
-      if (!encontrados.length) return ctx.reply(`No encontré ningún cliente llamado "${r.nombre}".`);
-      for (const c of encontrados.slice(0, 5)) {
-        const ficha = await clientes.fichaCompleta(c.id);
-        ctx.reply(formatearFicha(ficha));
-      }
-      return;
-    }
-
-    case 'crear_presupuesto': {
-      const cliente = await resolverCliente(ctx, r.cliente_nombre);
-      if (!cliente) return; // ya se avisó al usuario
-      if (!r.descripcion) {
-        session.set(ctx.chat.id, { flujo: 'presupuesto', paso: 'descripcion', datos: { cliente } });
-        return ctx.reply(`Cliente: ${cliente.nombre}. ¿Descripción del trabajo a presupuestar?`);
-      }
-      if (!r.monto) {
-        session.set(ctx.chat.id, { flujo: 'presupuesto', paso: 'monto', datos: { cliente, descripcion: r.descripcion } });
-        return ctx.reply('¿Monto del presupuesto?');
-      }
-      await presupuestos.crearPresupuesto({ cliente_id: cliente.id, descripcion: r.descripcion, monto: r.monto });
-      const buffer = await pdf.generarPresupuesto({ cliente, descripcion: r.descripcion, monto: r.monto });
-      await ctx.replyWithDocument({ source: buffer, filename: `presupuesto-${cliente.nombre}.pdf` });
-      return ctx.reply('Presupuesto guardado y generado. ✅');
-    }
-
-    case 'crear_recibo': {
-      const cliente = await resolverCliente(ctx, r.cliente_nombre);
-      if (!cliente) return;
-      if (!r.concepto) {
-        session.set(ctx.chat.id, { flujo: 'recibo', paso: 'concepto', datos: { cliente } });
-        return ctx.reply(`Cliente: ${cliente.nombre}. ¿Concepto del pago?`);
-      }
-      if (!r.monto) {
-        session.set(ctx.chat.id, { flujo: 'recibo', paso: 'monto', datos: { cliente, concepto: r.concepto } });
-        return ctx.reply('¿Monto recibido?');
-      }
-      const buffer = await pdf.generarRecibo({ cliente, monto: r.monto, concepto: r.concepto });
-      await ctx.replyWithDocument({ source: buffer, filename: `recibo-${cliente.nombre}.pdf` });
-      return ctx.reply('Recibo generado. ✅');
-    }
-
-    case 'registrar_trabajo': {
-      const cliente = await resolverCliente(ctx, r.cliente_nombre);
-      if (!cliente) return;
-      if (!r.descripcion) {
-        session.set(ctx.chat.id, { flujo: 'trabajo', paso: 'descripcion', datos: { cliente } });
-        return ctx.reply(`Cliente: ${cliente.nombre}. Contame qué trabajo hiciste.`);
-      }
-      await recordatorios.registrarTrabajo({ cliente_id: cliente.id, descripcion: r.descripcion });
-      return ctx.reply('Trabajo registrado. ✅');
-    }
-
-    case 'crear_recordatorio': {
-      if (!r.texto) return ctx.reply('¿Qué querés que te recuerde?');
-      if (!r.fecha_hora_iso) {
-        session.set(ctx.chat.id, { flujo: 'recordatorio', paso: 'fecha', datos: { texto: r.texto } });
-        return ctx.reply('¿Para cuándo? Escribilo así: DD/MM/AAAA HH:MM');
-      }
-      await recordatorios.crearRecordatorio({ texto: r.texto, fecha_hora: r.fecha_hora_iso });
-      return ctx.reply('Recordatorio guardado. ✅');
-    }
-
-    case 'registrar_equipo': {
-      const cliente = await resolverCliente(ctx, r.cliente_nombre);
-      if (!cliente) return;
-      if (!r.tipo) {
-        session.set(ctx.chat.id, { flujo: 'equipo', paso: 'tipo', datos: { cliente } });
-        return ctx.reply(`Cliente: ${cliente.nombre}. ¿Qué equipo instalaste?`);
-      }
-      const equipo = await equipos.registrarEquipo({
-        cliente_id: cliente.id,
-        tipo: r.tipo,
-        fecha_instalacion: new Date().toISOString().slice(0, 10),
-        meses_para_mantenimiento: r.meses_mantenimiento || null,
-        aviso_automatico: !!r.aviso_automatico,
-      });
-      if (equipo.proximo_mantenimiento) {
-        return ctx.reply(
-          `Listo, mantenimiento programado para ${equipo.proximo_mantenimiento}. ${equipo.aviso_automatico ? 'Se le avisará automáticamente al cliente.' : 'Te voy a avisar a vos ese día.'} ✅`
-        );
-      }
-      return ctx.reply('Equipo registrado. ✅');
-    }
-
-    case 'editar_presupuesto': {
-      const cliente = await resolverCliente(ctx, r.cliente_nombre);
-      if (!cliente) return;
-      const lista = await presupuestos.obtenerPresupuestosPorCliente(cliente.id);
-      if (!lista.length) return ctx.reply(`${cliente.nombre} no tiene presupuestos guardados todavía.`);
-      if (lista.length === 1) {
-        return aplicarEdicionPresupuesto(ctx, lista[0], r.nuevo_monto, r.nueva_descripcion);
-      }
-      session.set(ctx.chat.id, {
-        flujo: 'editarpresupuesto',
-        paso: 'elegir',
-        datos: { opciones: lista, nuevo_monto: r.nuevo_monto || null, nueva_descripcion: r.nueva_descripcion || null },
-      });
-      return ctx.reply(
-        `${cliente.nombre} tiene varios presupuestos. ¿Cuál querés modificar? Respondé con el número:\n` +
-          lista.map((p, i) => `${i + 1}. ${p.descripcion} - $${p.monto} (${new Date(p.fecha_creacion).toLocaleDateString('es-AR')})`).join('\n')
-      );
-    }
-
-    case 'consultar_pendientes':
-      return enviarPendientes(ctx);
-
-    case 'consultar_recontactar':
-      return enviarRecontactar(ctx);
-
-    case 'consultar_agenda':
-      return enviarAgendaDelDia(ctx.chat.id);
-
-    default:
-      return ctx.reply('No entendí bien qué querés hacer. Podés reformularlo, o escribir /ayuda para ver los comandos guiados.');
-  }
-}
-
-// Busca un cliente por nombre; si hay 0 o varios resultados, le avisa al usuario y devuelve null
-async function resolverCliente(ctx, nombre) {
-  if (!nombre) {
-    ctx.reply('¿Para qué cliente es? Decime el nombre.');
-    return null;
-  }
+async function resolverClienteSimple(nombre) {
+  if (!nombre) return null;
   const encontrados = await clientes.buscarClientesPorNombre(nombre);
-  if (!encontrados.length) {
-    ctx.reply(`No encontré ningún cliente llamado "${nombre}". Podés cargarlo primero con /nuevocliente.`);
-    return null;
-  }
-  if (encontrados.length > 1) {
-    ctx.reply('Encontré varios con ese nombre:\n' + encontrados.map((c, i) => `${i + 1}. ${c.nombre}`).join('\n') + '\n\nEscribí el nombre completo para elegir uno.');
-    return null;
-  }
+  if (!encontrados.length) return null;
+  if (encontrados.length > 1) return { multiple: true, nombres: encontrados.map((c) => c.nombre) };
   return encontrados[0];
 }
 
-// ================= CONSULTAS =================
+async function ejecutarHerramienta(ctx, nombre, args) {
+  switch (nombre) {
+    case 'buscar_cliente': {
+      const encontrados = await clientes.buscarClientesPorNombre(args.nombre || '');
+      if (!encontrados.length) return { encontrado: false };
+      for (const c of encontrados.slice(0, 5)) {
+        const ficha = await clientes.fichaCompleta(c.id);
+        await ctx.reply(formatearFicha(ficha));
+      }
+      return { encontrado: true, cantidad: encontrados.length };
+    }
 
-async function enviarPendientes(ctx) {
-  const lista = await cobros.cobrosPendientes();
-  if (!lista.length) return ctx.reply('No tenés cobros pendientes. 👍');
-  let msg = 'Cobros pendientes:\n\n';
-  lista.forEach((c) => {
-    msg += `• ${c.clientes?.nombre || 'Cliente'} - $${c.monto}${c.fecha_vencimiento ? ' (vence ' + c.fecha_vencimiento + ')' : ''}\n`;
-  });
-  ctx.reply(msg);
-}
+    case 'crear_cliente': {
+      const cliente = await clientes.crearCliente({
+        nombre: args.nombre,
+        telefono: args.telefono || null,
+        direccion: args.direccion || null,
+        notas: args.notas || null,
+      });
+      return { ok: true, nombre: cliente.nombre };
+    }
 
-async function enviarRecontactar(ctx) {
-  const lista = await presupuestos.presupuestosParaRecontactar(7);
-  if (!lista.length) return ctx.reply('No hay presupuestos para recontactar por ahora.');
-  let msg = 'Presupuestos para recontactar (sin novedades hace más de 7 días):\n\n';
-  lista.forEach((p) => {
-    msg += `• ${p.clientes?.nombre || 'Cliente'} - ${p.descripcion} ($${p.monto || '-'})\n`;
-  });
-  ctx.reply(msg);
+    case 'crear_presupuesto': {
+      const cliente = await resolverClienteSimple(args.cliente_nombre);
+      if (!cliente) return { error: `No encontré ningún cliente llamado "${args.cliente_nombre}". Sugerile cargarlo primero.` };
+      if (cliente.multiple) return { error: `Hay varios clientes parecidos: ${cliente.nombres.join(', ')}. Preguntale al usuario cuál es exactamente.` };
+      await presupuestos.crearPresupuesto({ cliente_id: cliente.id, descripcion: args.descripcion, monto: args.monto });
+      const buffer = await pdf.generarPresupuesto({ cliente, descripcion: args.descripcion, monto: args.monto });
+      await ctx.replyWithDocument({ source: buffer, filename: `presupuesto-${cliente.nombre}.pdf` });
+      return { ok: true, mensaje: 'Presupuesto creado y PDF enviado.' };
+    }
+
+    case 'editar_presupuesto': {
+      const cliente = await resolverClienteSimple(args.cliente_nombre);
+      if (!cliente) return { error: `No encontré ningún cliente llamado "${args.cliente_nombre}".` };
+      if (cliente.multiple) return { error: `Hay varios clientes parecidos: ${cliente.nombres.join(', ')}. Preguntale cuál es.` };
+      const ultimo = await presupuestos.obtenerUltimoPresupuesto(cliente.id);
+      if (!ultimo) return { error: `${cliente.nombre} no tiene presupuestos guardados.` };
+      const cambios = {};
+      if (args.nuevo_monto) cambios.monto = args.nuevo_monto;
+      if (args.nueva_descripcion) cambios.descripcion = args.nueva_descripcion;
+      if (!Object.keys(cambios).length) return { error: 'No se especificó qué cambiar.' };
+      const actualizado = await presupuestos.actualizarPresupuesto(ultimo.id, cambios);
+      return { ok: true, descripcion: actualizado.descripcion, monto: actualizado.monto };
+    }
+
+    case 'reenviar_presupuesto': {
+      const cliente = await resolverClienteSimple(args.cliente_nombre);
+      if (!cliente) return { error: `No encontré ningún cliente llamado "${args.cliente_nombre}".` };
+      if (cliente.multiple) return { error: `Hay varios clientes parecidos: ${cliente.nombres.join(', ')}. Preguntale cuál es.` };
+      const ultimo = await presupuestos.obtenerUltimoPresupuesto(cliente.id);
+      if (!ultimo) return { error: `${cliente.nombre} no tiene presupuestos guardados.` };
+      const buffer = await pdf.generarPresupuesto({ cliente, descripcion: ultimo.descripcion, monto: ultimo.monto });
+      await ctx.replyWithDocument({ source: buffer, filename: `presupuesto-${cliente.nombre}.pdf` });
+      return { ok: true };
+    }
+
+    case 'crear_recibo': {
+      const cliente = await resolverClienteSimple(args.cliente_nombre);
+      if (!cliente) return { error: `No encontré ningún cliente llamado "${args.cliente_nombre}".` };
+      if (cliente.multiple) return { error: `Hay varios clientes parecidos: ${cliente.nombres.join(', ')}. Preguntale cuál es.` };
+      const buffer = await pdf.generarRecibo({ cliente, monto: args.monto, concepto: args.concepto });
+      await ctx.replyWithDocument({ source: buffer, filename: `recibo-${cliente.nombre}.pdf` });
+      return { ok: true, mensaje: 'Recibo generado y enviado.' };
+    }
+
+    case 'registrar_trabajo': {
+      const cliente = await resolverClienteSimple(args.cliente_nombre);
+      if (!cliente) return { error: `No encontré ningún cliente llamado "${args.cliente_nombre}".` };
+      if (cliente.multiple) return { error: `Hay varios clientes parecidos: ${cliente.nombres.join(', ')}. Preguntale cuál es.` };
+      await recordatorios.registrarTrabajo({ cliente_id: cliente.id, descripcion: args.descripcion });
+      return { ok: true };
+    }
+
+    case 'registrar_equipo': {
+      const cliente = await resolverClienteSimple(args.cliente_nombre);
+      if (!cliente) return { error: `No encontré ningún cliente llamado "${args.cliente_nombre}".` };
+      if (cliente.multiple) return { error: `Hay varios clientes parecidos: ${cliente.nombres.join(', ')}. Preguntale cuál es.` };
+      const equipo = await equipos.registrarEquipo({
+        cliente_id: cliente.id,
+        tipo: args.tipo,
+        fecha_instalacion: new Date().toISOString().slice(0, 10),
+        meses_para_mantenimiento: args.meses_mantenimiento || null,
+        aviso_automatico: !!args.aviso_automatico,
+      });
+      return { ok: true, proximo_mantenimiento: equipo.proximo_mantenimiento || null };
+    }
+
+    case 'crear_recordatorio': {
+      await recordatorios.crearRecordatorio({ texto: args.texto, fecha_hora: args.fecha_hora_iso });
+      return { ok: true };
+    }
+
+    case 'consultar_pendientes': {
+      const lista = await cobros.cobrosPendientes();
+      if (!lista.length) {
+        await ctx.reply('No tenés cobros pendientes. 👍');
+        return { cantidad: 0 };
+      }
+      let msg = 'Cobros pendientes:\n\n';
+      lista.forEach((c) => {
+        msg += `• ${c.clientes?.nombre || 'Cliente'} - $${c.monto}${c.fecha_vencimiento ? ' (vence ' + c.fecha_vencimiento + ')' : ''}\n`;
+      });
+      await ctx.reply(msg);
+      return { cantidad: lista.length };
+    }
+
+    case 'consultar_recontactar': {
+      const lista = await presupuestos.presupuestosParaRecontactar(7);
+      if (!lista.length) {
+        await ctx.reply('No hay presupuestos para recontactar por ahora.');
+        return { cantidad: 0 };
+      }
+      let msg = 'Presupuestos para recontactar:\n\n';
+      lista.forEach((p) => {
+        msg += `• ${p.clientes?.nombre || 'Cliente'} - ${p.descripcion} ($${p.monto || '-'})\n`;
+      });
+      await ctx.reply(msg);
+      return { cantidad: lista.length };
+    }
+
+    case 'consultar_agenda': {
+      await enviarAgendaDelDia(ctx.chat.id);
+      return { ok: true };
+    }
+
+    case 'guardar_nota': {
+      await notas.crearNota({ titulo: args.titulo || null, contenido: args.contenido });
+      return { ok: true };
+    }
+
+    case 'buscar_nota': {
+      const encontradas = await notas.buscarNotas(args.busqueda || '');
+      if (!encontradas.length) return { encontrado: false };
+      let msg = '📝 Encontré esto:\n\n';
+      encontradas.forEach((n) => {
+        msg += `${n.titulo ? `*${n.titulo}*\n` : ''}${n.contenido}\n\n`;
+      });
+      await ctx.reply(msg);
+      return { encontrado: true, cantidad: encontradas.length };
+    }
+
+    case 'generar_documento': {
+      const buffer = await pdf.generarDocumentoLibre({ titulo: args.titulo, contenido: args.contenido });
+      await ctx.replyWithDocument({ source: buffer, filename: `${args.titulo || 'documento'}.pdf` });
+      return { ok: true };
+    }
+
+    default:
+      return { error: `Herramienta desconocida: ${nombre}` };
+  }
 }
 
 // ================= FLUJOS GUIADOS (comandos paso a paso) =================
@@ -531,27 +515,6 @@ async function pasoEquipo(ctx, estado, texto) {
   }
 }
 
-async function aplicarEdicionPresupuesto(ctx, presupuesto, nuevoMonto, nuevaDescripcion) {
-  const cambios = {};
-  if (nuevoMonto) cambios.monto = nuevoMonto;
-  if (nuevaDescripcion) cambios.descripcion = nuevaDescripcion;
-  if (!Object.keys(cambios).length) {
-    return ctx.reply('¿Qué querés cambiar, el monto o la descripción?');
-  }
-  const actualizado = await presupuestos.actualizarPresupuesto(presupuesto.id, cambios);
-  return ctx.reply(`Presupuesto actualizado: "${actualizado.descripcion}" - $${actualizado.monto}. ✅`);
-}
-
-async function pasoEditarPresupuesto(ctx, estado, texto) {
-  if (estado.paso === 'elegir') {
-    const idx = parseInt(texto, 10) - 1;
-    const elegido = estado.datos.opciones?.[idx];
-    if (!elegido) return ctx.reply('Número inválido, probá de nuevo.');
-    session.limpiar(ctx.chat.id);
-    return aplicarEdicionPresupuesto(ctx, elegido, estado.datos.nuevo_monto, estado.datos.nueva_descripcion);
-  }
-}
-
 async function pasoRecordatorio(ctx, estado, texto) {
   if (estado.paso === 'texto') {
     estado.datos.texto = texto;
@@ -568,6 +531,16 @@ async function pasoRecordatorio(ctx, estado, texto) {
     session.limpiar(ctx.chat.id);
     return ctx.reply('Recordatorio guardado. ✅');
   }
+}
+
+// ================= AGENDA / CONSULTAS DIRECTAS =================
+
+async function enviarPendientes(ctx) {
+  await ejecutarHerramienta(ctx, 'consultar_pendientes', {});
+}
+
+async function enviarRecontactar(ctx) {
+  await ejecutarHerramienta(ctx, 'consultar_recontactar', {});
 }
 
 async function enviarAgendaDelDia(chatId) {
