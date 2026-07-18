@@ -165,6 +165,16 @@ async function ultimoArchivado(cliente_id) {
   return data;
 }
 
+async function presupuestosArchivados() {
+  const { data, error } = await supabase
+    .from('presupuestos')
+    .select('*, clientes(nombre, telefono, direccion)')
+    .eq('archivado', true)
+    .order('fecha_ultimo_contacto', { ascending: false });
+  if (error) throw error;
+  return data;
+}
+
 module.exports = {
   crearPresupuesto,
   obtenerItems,
@@ -179,4 +189,5 @@ module.exports = {
   restaurarPresupuesto,
   eliminarPresupuestoPermanente,
   ultimoArchivado,
+  presupuestosArchivados,
 };
