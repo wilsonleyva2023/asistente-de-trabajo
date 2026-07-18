@@ -21,6 +21,7 @@ async function buscarClientesPorNombre(texto) {
   const { data, error } = await supabase
     .from('clientes')
     .select('*')
+    .eq('archivado', false)
     .or(`nombre.ilike.%${texto}%,apodo.ilike.%${texto}%`)
     .order('creado_en', { ascending: false });
   if (error) throw error;
@@ -79,4 +80,31 @@ async function infoParaDistinguir(id) {
   };
 }
 
-module.exports = { crearCliente, actualizarCliente, buscarClientesPorNombre, obtenerCliente, fichaCompleta, infoParaDistinguir };
+async function archivarCliente(id) {
+  const { data, error } = await supabase.from('clientes').update({ archivado: true }).eq('id', id).select().single();
+  if (error) throw error;
+  return data;
+}
+
+async function restaurarCliente(id) {
+  const { data, error } = await supabase.from('clientes').update({ archivado: false }).eq('id', id).select().single();
+  if (error) throw error;
+  return data;
+}
+
+async function eliminarClientePermanente(id) {
+  const { error } = await supabase.from('clientes').delete().eq('id', id);
+  if (error) throw error;
+}
+
+module.exports = {
+  crearCliente,
+  actualizarCliente,
+  buscarClientesPorNombre,
+  obtenerCliente,
+  fichaCompleta,
+  infoParaDistinguir,
+  archivarCliente,
+  restaurarCliente,
+  eliminarClientePermanente,
+};
