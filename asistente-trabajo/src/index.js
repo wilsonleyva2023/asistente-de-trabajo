@@ -6,23 +6,26 @@ const { iniciarTareasProgramadas } = require('./jobs/scheduler');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Render necesita que haya un servidor web escuchando en un puerto,
-// aunque el "trabajo real" lo hace el bot. Esta ruta sirve para eso.
 app.get('/', (req, res) => {
   res.send('Asistente de trabajo funcionando ✅');
 });
 
-app.listen(PORT, () => {
+const WEBHOOK_PATH = `/telegraf/${process.env.TELEGRAM_BOT_TOKEN}`;
+app.use(bot.webhookCallback(WEBHOOK_PATH));
+
+app.listen(PORT, async () => {
   console.log(`Servidor web escuchando en el puerto ${PORT}`);
+  const dominio = process.env.RENDER_EXTERNAL_URL;
+  if (dominio) {
+    try {
+      await bot.telegram.setWebhook(`${dominio}${WEBHOOK_PATH}`);
+      console.log('Webhook de Telegram configurado en', `${dominio}${WEBHOOK_PATH}`);
+    } catch (err) {
+      console.error('Error configurando el webhook:', err);
+    }
+  } else {
+    console.warn('No se encontró RENDER_EXTERNAL_URL, no se pudo configurar el webhook automáticamente.');
+  }
 });
 
-bot
-  .launch()
-  .then(() => console.log('Bot de Telegram iniciado.'))
-  .catch((err) => console.error('Error iniciando el bot:', err));
-
 iniciarTareasProgramadas();
-
-// Apagado prolijo
-process.once('SIGINT', () => bot.stop('SIGINT'));
-process.once('SIGTERM', () => bot.stop('SIGTERM'));
