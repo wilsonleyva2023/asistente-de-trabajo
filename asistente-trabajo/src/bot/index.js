@@ -314,6 +314,15 @@ async function ejecutarHerramienta(ctx, nombre, args) {
       const vencimiento = new Date();
       vencimiento.setDate(vencimiento.getDate() + 15);
       await cobros.crearCobro({ cliente_id: cliente.id, presupuesto_id: creado.id, monto: creado.monto, fecha_vencimiento: vencimiento.toISOString().slice(0, 10) });
+      if (!args.generar_pdf) {
+        return {
+          ok: true,
+          mensaje: 'Presupuesto guardado (sin generar PDF). Se registró la deuda pendiente correspondiente.',
+          items: creado.items.map((i) => ({ descripcion: i.descripcion, monto: i.monto })),
+          total: creado.monto,
+          cliente_id: cliente.id,
+        };
+      }
       const buffer = await pdf.generarPresupuesto({
         cliente,
         items,
@@ -334,6 +343,9 @@ async function ejecutarHerramienta(ctx, nombre, args) {
       if (r.error) return r;
       const { cliente, presupuesto: ultimo } = r;
       const { items } = await presupuestos.agregarItems(ultimo.id, args.items || []);
+      if (!args.generar_pdf) {
+        return { ok: true, mensaje: 'Ítems agregados (sin generar PDF).', items: items.map((i) => ({ descripcion: i.descripcion, monto: i.monto })), cliente_id: cliente.id };
+      }
       const buffer = await pdf.generarPresupuesto({ cliente, items });
       await enviarDocumentoConReintento(ctx, { source: buffer, filename: `presupuesto-${cliente.nombre}.pdf` });
       return { ok: true, cliente_id: cliente.id };
@@ -348,6 +360,14 @@ async function ejecutarHerramienta(ctx, nombre, args) {
       const idsAQuitar = itemsActuales.filter((it) => busquedas.some((b) => it.descripcion.toLowerCase().includes(b))).map((it) => it.id);
       if (!idsAQuitar.length) return { error: 'No encontré ítems que coincidan con esa descripción en el presupuesto.' };
       const { items } = await presupuestos.quitarItems(ultimo.id, idsAQuitar, !!args.permanente);
+      if (!args.generar_pdf) {
+        return {
+          ok: true,
+          items_quitados: idsAQuitar.length,
+          items_restantes: items.map((i) => ({ descripcion: i.descripcion, monto: i.monto })),
+          cliente_id: cliente.id,
+        };
+      }
       if (items.length) {
         const buffer = await pdf.generarPresupuesto({ cliente, items });
         await enviarDocumentoConReintento(ctx, { source: buffer, filename: `presupuesto-${cliente.nombre}.pdf` });
@@ -439,23 +459,26 @@ async function ejecutarHerramienta(ctx, nombre, args) {
       if (cliente.multiple) return errorClienteAmbiguo(cliente.opciones);
       let concepto = args.concepto;
       let monto = args.monto;
-      if (!concepto || !monto) {
+      let items = null;
+      if (!concepto && !monto) {
         const activo = await presupuestos.obtenerUltimoPresupuesto(cliente.id);
         if (activo) {
-          concepto = concepto || activo.descripcion;
-          monto = monto || activo.monto;
+          items = activo.presupuesto_items?.filter((i) => !i.archivado);
+          if (!items || !items.length) items = [{ descripcion: activo.descripcion, monto: activo.monto }];
+          monto = activo.monto;
+          concepto = activo.descripcion;
         }
       }
-      if (!concepto || !monto) {
+      if (!concepto && !monto && !items) {
         return { error: `Faltan datos para el recibo (concepto y/o monto) y ${cliente.nombre} no tiene un presupuesto activo del cual tomarlos. Preguntale al usuario.` };
       }
-      const buffer = await pdf.generarRecibo({ cliente, monto, concepto });
+      const buffer = await pdf.generarRecibo({ cliente, items, monto, concepto });
       await enviarDocumentoConReintento(ctx, { source: buffer, filename: `recibo-${cliente.nombre}.pdf` });
       // Si había una deuda pendiente de este cliente, la marcamos como saldada.
       const cobrosCliente = await cobros.obtenerCobrosPorCliente(cliente.id);
       const pendiente = cobrosCliente.find((c) => c.estado === 'pendiente');
       if (pendiente) await cobros.marcarCobrado(pendiente.id);
-      return { ok: true, mensaje: 'Recibo generado y enviado.', deuda_saldada: !!pendiente, cliente_id: cliente.id, concepto, monto };
+      return { ok: true, mensaje: 'Recibo generado y enviado.', deuda_saldada: !!pendiente, cliente_id: cliente.id };
     }
 
     case 'registrar_trabajo': {
