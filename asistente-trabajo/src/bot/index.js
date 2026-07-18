@@ -13,6 +13,7 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN);
 // Configurá TELEGRAM_CHAT_ID_PERMITIDO en las variables de entorno después
 // de mandarle un primer mensaje al bot (te explico cómo obtenerlo en el README).
 bot.use((ctx, next) => {
+  console.log('MI CHAT ID ES:', ctx.chat?.id);
   const permitido = process.env.TELEGRAM_CHAT_ID_PERMITIDO;
   if (permitido && String(ctx.chat?.id) !== String(permitido)) {
     return ctx.reply('No tenés autorización para usar este asistente.');
