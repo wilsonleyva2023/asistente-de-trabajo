@@ -1,11 +1,7 @@
 const { supabase } = require('../db');
 
 async function crearNota({ titulo, contenido }) {
-  const { data, error } = await supabase
-    .from('notas')
-    .insert([{ titulo: titulo || null, contenido }])
-    .select()
-    .single();
+  const { data, error } = await supabase.from('notas').insert([{ titulo: titulo || null, contenido }]).select().single();
   if (error) throw error;
   return data;
 }
@@ -21,14 +17,15 @@ async function buscarNotas(busqueda) {
   return data;
 }
 
-async function notasRecientes(limite = 5) {
-  const { data, error } = await supabase
-    .from('notas')
-    .select('*')
-    .order('creado_en', { ascending: false })
-    .limit(limite);
+async function notasRecientes(limite = 20) {
+  const { data, error } = await supabase.from('notas').select('*').order('creado_en', { ascending: false }).limit(limite);
   if (error) throw error;
   return data;
 }
 
-module.exports = { crearNota, buscarNotas, notasRecientes };
+async function eliminarNota(id) {
+  const { error } = await supabase.from('notas').delete().eq('id', id);
+  if (error) throw error;
+}
+
+module.exports = { crearNota, buscarNotas, notasRecientes, eliminarNota };
