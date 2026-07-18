@@ -208,14 +208,14 @@ bot.on('document', async (ctx) => {
 
 // A veces Render tiene cortes de red breves al mandar archivos grandes a Telegram.
 // Reintentamos un par de veces antes de rendirnos.
-async function enviarDocumentoConReintento(ctx, opciones, intentos = 3) {
+async function enviarDocumentoConReintento(ctx, opciones, intentos = 2) {
   for (let i = 1; i <= intentos; i++) {
     try {
       return await ctx.replyWithDocument(opciones);
     } catch (err) {
       console.error(`Intento ${i} de enviar documento falló:`, err.message);
       if (i === intentos) throw err;
-      await new Promise((r) => setTimeout(r, 1000 * i));
+      await new Promise((r) => setTimeout(r, 500));
     }
   }
 }
