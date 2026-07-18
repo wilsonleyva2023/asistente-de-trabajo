@@ -206,6 +206,20 @@ bot.on('document', async (ctx) => {
 
 // ================= HERRAMIENTAS QUE LA IA PUEDE USAR =================
 
+// A veces Render tiene cortes de red breves al mandar archivos grandes a Telegram.
+// Reintentamos un par de veces antes de rendirnos.
+async function enviarDocumentoConReintento(ctx, opciones, intentos = 3) {
+  for (let i = 1; i <= intentos; i++) {
+    try {
+      return await ctx.replyWithDocument(opciones);
+    } catch (err) {
+      console.error(`Intento ${i} de enviar documento falló:`, err.message);
+      if (i === intentos) throw err;
+      await new Promise((r) => setTimeout(r, 1000 * i));
+    }
+  }
+}
+
 async function resolverClienteSimple(nombre) {
   if (!nombre) return null;
   const encontrados = await clientes.buscarClientesPorNombre(nombre);
@@ -242,7 +256,7 @@ async function ejecutarHerramienta(ctx, nombre, args) {
       if (cliente.multiple) return { error: `Hay varios clientes parecidos: ${cliente.nombres.join(', ')}. Preguntale al usuario cuál es exactamente.` };
       await presupuestos.crearPresupuesto({ cliente_id: cliente.id, descripcion: args.descripcion, monto: args.monto });
       const buffer = await pdf.generarPresupuesto({ cliente, descripcion: args.descripcion, monto: args.monto });
-      await ctx.replyWithDocument({ source: buffer, filename: `presupuesto-${cliente.nombre}.pdf` });
+      await enviarDocumentoConReintento(ctx, { source: buffer, filename: `presupuesto-${cliente.nombre}.pdf` });
       return { ok: true, mensaje: 'Presupuesto creado y PDF enviado.' };
     }
 
@@ -267,7 +281,7 @@ async function ejecutarHerramienta(ctx, nombre, args) {
       const ultimo = await presupuestos.obtenerUltimoPresupuesto(cliente.id);
       if (!ultimo) return { error: `${cliente.nombre} no tiene presupuestos guardados.` };
       const buffer = await pdf.generarPresupuesto({ cliente, descripcion: ultimo.descripcion, monto: ultimo.monto });
-      await ctx.replyWithDocument({ source: buffer, filename: `presupuesto-${cliente.nombre}.pdf` });
+      await enviarDocumentoConReintento(ctx, { source: buffer, filename: `presupuesto-${cliente.nombre}.pdf` });
       return { ok: true };
     }
 
@@ -276,7 +290,7 @@ async function ejecutarHerramienta(ctx, nombre, args) {
       if (!cliente) return { error: `No encontré ningún cliente llamado "${args.cliente_nombre}".` };
       if (cliente.multiple) return { error: `Hay varios clientes parecidos: ${cliente.nombres.join(', ')}. Preguntale cuál es.` };
       const buffer = await pdf.generarRecibo({ cliente, monto: args.monto, concepto: args.concepto });
-      await ctx.replyWithDocument({ source: buffer, filename: `recibo-${cliente.nombre}.pdf` });
+      await enviarDocumentoConReintento(ctx, { source: buffer, filename: `recibo-${cliente.nombre}.pdf` });
       return { ok: true, mensaje: 'Recibo generado y enviado.' };
     }
 
@@ -358,7 +372,7 @@ async function ejecutarHerramienta(ctx, nombre, args) {
 
     case 'generar_documento': {
       const buffer = await pdf.generarDocumentoLibre({ titulo: args.titulo, contenido: args.contenido });
-      await ctx.replyWithDocument({ source: buffer, filename: `${args.titulo || 'documento'}.pdf` });
+      await enviarDocumentoConReintento(ctx, { source: buffer, filename: `${args.titulo || 'documento'}.pdf` });
       return { ok: true };
     }
 
@@ -490,7 +504,7 @@ async function pasoPresupuesto(ctx, estado, texto) {
     });
     const buffer = await pdf.generarPresupuesto({ cliente: estado.datos.cliente, descripcion: estado.datos.descripcion, monto });
     session.limpiar(ctx.chat.id);
-    await ctx.replyWithDocument({ source: buffer, filename: `presupuesto-${estado.datos.cliente.nombre}.pdf` });
+    await enviarDocumentoConReintento(ctx, { source: buffer, filename: `presupuesto-${estado.datos.cliente.nombre}.pdf` });
     return ctx.reply('Presupuesto guardado y generado. ✅ Se lo podés reenviar al cliente por WhatsApp.');
   }
 }
@@ -515,7 +529,7 @@ async function pasoRecibo(ctx, estado, texto) {
     if (isNaN(monto)) return ctx.reply('Poné solo el número.');
     const buffer = await pdf.generarRecibo({ cliente: estado.datos.cliente, monto, concepto: estado.datos.concepto });
     session.limpiar(ctx.chat.id);
-    await ctx.replyWithDocument({ source: buffer, filename: `recibo-${estado.datos.cliente.nombre}.pdf` });
+    await enviarDocumentoConReintento(ctx, { source: buffer, filename: `recibo-${estado.datos.cliente.nombre}.pdf` });
     return ctx.reply('Recibo generado. ✅');
   }
 }
