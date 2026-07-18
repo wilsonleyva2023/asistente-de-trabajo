@@ -1,81 +1,19 @@
 const { supabase } = require('../db');
 
-// items: [{ descripcion, monto }, ...]
-async function crearPresupuesto({ cliente_id, items, descripcion, monto }) {
-  // Compatibilidad: si viene descripcion+monto sueltos (sin items), se arma un solo ítem.
-  const listaItems = items && items.length ? items : [{ descripcion, monto }];
-  const totalMonto = listaItems.reduce((acc, i) => acc + Number(i.monto || 0), 0);
-  const descripcionGeneral = listaItems.map((i) => i.descripcion).join(' + ');
-
-  const { data: presupuesto, error } = await supabase
-    .from('presupuestos')
-    .insert([{ cliente_id, descripcion: descripcionGeneral, monto: totalMonto, estado: 'pendiente' }])
+async function crearCobro({ cliente_id, presupuesto_id, monto, fecha_vencimiento }) {
+  const { data, error } = await supabase
+    .from('cobros')
+    .insert([{ cliente_id, presupuesto_id, monto, fecha_vencimiento, estado: 'pendiente', monto_pagado: 0 }])
     .select()
     .single();
-  if (error) throw error;
-
-  const { data: itemsGuardados, error: errorItems } = await supabase
-    .from('presupuesto_items')
-    .insert(listaItems.map((i) => ({ presupuesto_id: presupuesto.id, descripcion: i.descripcion, monto: i.monto })))
-    .select();
-  if (errorItems) throw errorItems;
-
-  return { ...presupuesto, items: itemsGuardados };
-}
-
-async function obtenerItems(presupuesto_id) {
-  const { data, error } = await supabase
-    .from('presupuesto_items')
-    .select('*')
-    .eq('presupuesto_id', presupuesto_id)
-    .eq('archivado', false)
-    .order('creado_en', { ascending: true });
   if (error) throw error;
   return data;
 }
 
-// Borra ítems puntuales de un presupuesto (temporal por defecto) y recalcula el total.
-async function quitarItems(presupuesto_id, itemIds, permanente = false) {
-  if (permanente) {
-    const { error } = await supabase.from('presupuesto_items').delete().in('id', itemIds);
-    if (error) throw error;
-  } else {
-    const { error } = await supabase.from('presupuesto_items').update({ archivado: true }).in('id', itemIds);
-    if (error) throw error;
-  }
-  const itemsRestantes = await obtenerItems(presupuesto_id);
-  const nuevoTotal = itemsRestantes.reduce((acc, i) => acc + Number(i.monto), 0);
-  const nuevaDescripcion = itemsRestantes.map((i) => i.descripcion).join(' + ') || '(sin ítems)';
-  const { data, error: errorUpd } = await supabase
-    .from('presupuestos')
-    .update({ monto: nuevoTotal, descripcion: nuevaDescripcion, fecha_ultimo_contacto: new Date().toISOString() })
-    .eq('id', presupuesto_id)
-    .select()
-    .single();
-  if (errorUpd) throw errorUpd;
-  return { presupuesto: data, items: itemsRestantes };
-}
-
-async function agregarItems(presupuesto_id, items) {
-  const { error } = await supabase.from('presupuesto_items').insert(items.map((i) => ({ presupuesto_id, descripcion: i.descripcion, monto: i.monto })));
-  if (error) throw error;
-  const itemsActuales = await obtenerItems(presupuesto_id);
-  const nuevoTotal = itemsActuales.reduce((acc, i) => acc + Number(i.monto), 0);
-  const nuevaDescripcion = itemsActuales.map((i) => i.descripcion).join(' + ');
-  const { data, error: errorUpd } = await supabase
-    .from('presupuestos')
-    .update({ monto: nuevoTotal, descripcion: nuevaDescripcion, fecha_ultimo_contacto: new Date().toISOString() })
-    .eq('id', presupuesto_id)
-    .select()
-    .single();
-  if (errorUpd) throw errorUpd;
-  return { presupuesto: data, items: itemsActuales };
-}
-
-async function cambiarEstado(id, estado) {
+async function marcarCobrado(id) {
   const { data, error } = await supabase
-    .from('presupuestos')
-    .update({ estado, fecha_ultimo_contacto: new Date().toISOString() })
+    .from('cobros')
+    .update({ estado: 'cobrado', fecha_cobro: new Date().toISOString().slice(0, 10) })
     .eq('id', id)
     .select()
     .single();
@@ -83,82 +21,72 @@ async function cambiarEstado(id, estado) {
   return data;
 }
 
-async function presupuestosParaRecontactar(diasSinContacto = 7) {
-  const limite = new Date();
-  limite.setDate(limite.getDate() - diasSinContacto);
+// Registra un pago parcial. Si con este pago se completa el total, lo marca cobrado solo.
+async function registrarPagoParcial(id, montoPagado) {
+  const { data: actual, error: errorGet } = await supabase.from('cobros').select('*').eq('id', id).single();
+  if (errorGet) throw errorGet;
+  const nuevoPagado = Number(actual.monto_pagado || 0) + Number(montoPagado);
+  const completo = nuevoPagado >= Number(actual.monto);
   const { data, error } = await supabase
-    .from('presupuestos')
+    .from('cobros')
+    .update({
+      monto_pagado: nuevoPagado,
+      estado: completo ? 'cobrado' : 'pendiente',
+      fecha_cobro: completo ? new Date().toISOString().slice(0, 10) : actual.fecha_cobro,
+    })
+    .eq('id', id)
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+async function cobrosPendientes() {
+  const { data, error } = await supabase
+    .from('cobros')
     .select('*, clientes(nombre, telefono)')
+    .eq('estado', 'pendiente')
     .eq('archivado', false)
-    .in('estado', ['pendiente', 'no_concretado'])
-    .lt('fecha_ultimo_contacto', limite.toISOString())
-    .order('fecha_ultimo_contacto', { ascending: true });
+    .order('fecha_vencimiento', { ascending: true });
   if (error) throw error;
   return data;
 }
 
-async function obtenerUltimoPresupuesto(cliente_id) {
+async function obtenerCobrosPorCliente(cliente_id) {
   const { data, error } = await supabase
-    .from('presupuestos')
-    .select('*, presupuesto_items(*)')
+    .from('cobros')
+    .select('*')
     .eq('cliente_id', cliente_id)
     .eq('archivado', false)
-    .order('fecha_creacion', { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .order('creado_en', { ascending: false });
   if (error) throw error;
   return data;
 }
 
-async function actualizarPresupuesto(id, cambios) {
-  const { data, error } = await supabase
-    .from('presupuestos')
-    .update({ ...cambios, fecha_ultimo_contacto: new Date().toISOString() })
-    .eq('id', id)
-    .select()
-    .single();
+async function archivarCobro(id) {
+  const { data, error } = await supabase.from('cobros').update({ archivado: true }).eq('id', id).select().single();
   if (error) throw error;
   return data;
 }
 
-async function obtenerPresupuestosPorCliente(cliente_id) {
-  const { data, error } = await supabase
-    .from('presupuestos')
-    .select('*, presupuesto_items(*)')
-    .eq('cliente_id', cliente_id)
-    .eq('archivado', false)
-    .order('fecha_creacion', { ascending: false });
+async function restaurarCobro(id) {
+  const { data, error } = await supabase.from('cobros').update({ archivado: false }).eq('id', id).select().single();
   if (error) throw error;
   return data;
 }
 
-// Borrado temporal: se archiva, no aparece en listas normales, se puede restaurar.
-async function archivarPresupuesto(id) {
-  const { data, error } = await supabase.from('presupuestos').update({ archivado: true }).eq('id', id).select().single();
-  if (error) throw error;
-  return data;
-}
-
-async function restaurarPresupuesto(id) {
-  const { data, error } = await supabase.from('presupuestos').update({ archivado: false }).eq('id', id).select().single();
-  if (error) throw error;
-  return data;
-}
-
-// Borrado definitivo: no se puede deshacer.
-async function eliminarPresupuestoPermanente(id) {
-  const { error } = await supabase.from('presupuestos').delete().eq('id', id);
+async function eliminarCobroPermanente(id) {
+  const { error } = await supabase.from('cobros').delete().eq('id', id);
   if (error) throw error;
 }
 
-// Para poder "restaurar el último que borré"
 async function ultimoArchivado(cliente_id) {
   const { data, error } = await supabase
-    .from('presupuestos')
+    .from('cobros')
     .select('*')
     .eq('cliente_id', cliente_id)
     .eq('archivado', true)
-    .order('fecha_ultimo_contacto', { ascending: false })
+    .order('creado_en', { ascending: false })
     .limit(1)
     .maybeSingle();
   if (error) throw error;
@@ -166,17 +94,13 @@ async function ultimoArchivado(cliente_id) {
 }
 
 module.exports = {
-  crearPresupuesto,
-  obtenerItems,
-  quitarItems,
-  agregarItems,
-  cambiarEstado,
-  presupuestosParaRecontactar,
-  obtenerUltimoPresupuesto,
-  actualizarPresupuesto,
-  obtenerPresupuestosPorCliente,
-  archivarPresupuesto,
-  restaurarPresupuesto,
-  eliminarPresupuestoPermanente,
+  crearCobro,
+  marcarCobrado,
+  registrarPagoParcial,
+  cobrosPendientes,
+  obtenerCobrosPorCliente,
+  archivarCobro,
+  restaurarCobro,
+  eliminarCobroPermanente,
   ultimoArchivado,
 };
