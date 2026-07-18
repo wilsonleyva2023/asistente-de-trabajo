@@ -31,4 +31,15 @@ async function cobrosPendientes() {
   return data;
 }
 
-module.exports = { crearCobro, marcarCobrado, cobrosPendientes };
+async function obtenerCobrosPorCliente(cliente_id) {
+  const { data, error } = await supabase.from('cobros').select('*').eq('cliente_id', cliente_id).order('creado_en', { ascending: false });
+  if (error) throw error;
+  return data;
+}
+
+async function eliminarCobro(id) {
+  const { error } = await supabase.from('cobros').delete().eq('id', id);
+  if (error) throw error;
+}
+
+module.exports = { crearCobro, marcarCobrado, cobrosPendientes, obtenerCobrosPorCliente, eliminarCobro };
