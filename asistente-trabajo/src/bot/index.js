@@ -311,6 +311,9 @@ async function ejecutarHerramienta(ctx, nombre, args) {
       const items = args.items && args.items.length ? args.items : [];
       if (!items.length) return { error: 'No se especificaron ítems para el presupuesto.' };
       const creado = await presupuestos.crearPresupuesto({ cliente_id: cliente.id, items });
+      const vencimiento = new Date();
+      vencimiento.setDate(vencimiento.getDate() + 15);
+      await cobros.crearCobro({ cliente_id: cliente.id, presupuesto_id: creado.id, monto: creado.monto, fecha_vencimiento: vencimiento.toISOString().slice(0, 10) });
       const buffer = await pdf.generarPresupuesto({
         cliente,
         items,
@@ -323,7 +326,7 @@ async function ejecutarHerramienta(ctx, nombre, args) {
         incluirFormaPago: args.incluir_forma_pago !== false,
       });
       await enviarDocumentoConReintento(ctx, { source: buffer, filename: `presupuesto-${cliente.nombre}.pdf` });
-      return { ok: true, mensaje: 'Presupuesto creado y PDF enviado.', cliente_id: cliente.id };
+      return { ok: true, mensaje: 'Presupuesto creado y PDF enviado. Se registró la deuda pendiente correspondiente.', cliente_id: cliente.id };
     }
 
     case 'agregar_items_presupuesto': {
@@ -396,6 +399,16 @@ async function ejecutarHerramienta(ctx, nombre, args) {
       return { ok: true, mensaje: 'Presupuesto borrado (se puede restaurar si hace falta).' };
     }
 
+    case 'cambiar_estado_presupuesto': {
+      const r = await resolverClienteConPresupuesto(args);
+      if (r.error) return r;
+      const { cliente, presupuesto: ultimo } = r;
+      const estadosValidos = ['aceptado', 'rechazado', 'no_concretado', 'pendiente'];
+      if (!estadosValidos.includes(args.estado)) return { error: `Estado inválido: ${args.estado}` };
+      await presupuestos.cambiarEstado(ultimo.id, args.estado);
+      return { ok: true, mensaje: `Presupuesto de ${cliente.nombre} marcado como ${args.estado}.` };
+    }
+
     case 'listar_presupuestos_archivados': {
       const lista = await presupuestos.presupuestosArchivados();
       if (!lista.length) {
@@ -424,9 +437,25 @@ async function ejecutarHerramienta(ctx, nombre, args) {
       const cliente = await resolverCliente(args);
       if (!cliente) return errorClienteNoEncontrado(args.cliente_nombre);
       if (cliente.multiple) return errorClienteAmbiguo(cliente.opciones);
-      const buffer = await pdf.generarRecibo({ cliente, monto: args.monto, concepto: args.concepto });
+      let concepto = args.concepto;
+      let monto = args.monto;
+      if (!concepto || !monto) {
+        const activo = await presupuestos.obtenerUltimoPresupuesto(cliente.id);
+        if (activo) {
+          concepto = concepto || activo.descripcion;
+          monto = monto || activo.monto;
+        }
+      }
+      if (!concepto || !monto) {
+        return { error: `Faltan datos para el recibo (concepto y/o monto) y ${cliente.nombre} no tiene un presupuesto activo del cual tomarlos. Preguntale al usuario.` };
+      }
+      const buffer = await pdf.generarRecibo({ cliente, monto, concepto });
       await enviarDocumentoConReintento(ctx, { source: buffer, filename: `recibo-${cliente.nombre}.pdf` });
-      return { ok: true, mensaje: 'Recibo generado y enviado.', cliente_id: cliente.id };
+      // Si había una deuda pendiente de este cliente, la marcamos como saldada.
+      const cobrosCliente = await cobros.obtenerCobrosPorCliente(cliente.id);
+      const pendiente = cobrosCliente.find((c) => c.estado === 'pendiente');
+      if (pendiente) await cobros.marcarCobrado(pendiente.id);
+      return { ok: true, mensaje: 'Recibo generado y enviado.', deuda_saldada: !!pendiente, cliente_id: cliente.id, concepto, monto };
     }
 
     case 'registrar_trabajo': {
