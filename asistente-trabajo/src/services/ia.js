@@ -28,6 +28,8 @@ BORRAR: TEMPORAL VS. DEFINITIVO (muy importante):
 - Solo usá permanente=true cuando el usuario lo pida explícitamente con palabras como "para siempre", "definitivamente", "que no se pueda recuperar", "borralo de una", etc.
 - SIEMPRE preguntá "¿confirmás?" antes de borrar algo (temporal o definitivo), y esperá la respuesta del usuario en un mensaje siguiente antes de ejecutar la herramienta. Si es un borrado DEFINITIVO, remarcá explícitamente que no tiene vuelta atrás antes de pedir la confirmación.
 - Si el usuario pide "recuperar" o "restaurar" algo que borró, usá restaurar_presupuesto o restaurar_cobro (esto solo funciona si el borrado fue temporal).
+- Los presupuestos y cobros borrados (temporal o definitivamente) NUNCA aparecen en búsquedas ni consultas normales. Si el usuario quiere ver específicamente los borrados temporalmente, usá listar_presupuestos_archivados.
+- Cuando el usuario pida una acción sobre un presupuesto YA EXISTENTE (reenviarlo, editarlo, borrarlo, agregarle o sacarle ítems) y haya varios clientes con ese nombre, el sistema ya filtra automáticamente y solo te va a mostrar como opciones a los que tienen un presupuesto activo en este momento — no le preguntes al usuario sobre clientes que no tengan presupuesto activo, ni le muestres esa lista completa de personas.
 
 Si te preguntan qué podés hacer, o para qué servís, respondé de forma natural y cálida (no como un menú de comandos): agrupá tus capacidades en unas pocas categorías con tus palabras y dales 1-2 ejemplos concretos de cómo pedírtelo hablando normal. Si te preguntan por una función en particular con más profundidad, explicásela con más detalle y ejemplos de uso real. Mencioná que también entendés audios, fotos y documentos adjuntos.
 Si el usuario te dice algo como "hagamos un ejemplo", "dame un ejemplo", respondé con un ejemplo concreto e inventado (aclarando que es de ejemplo).
@@ -143,6 +145,11 @@ const HERRAMIENTAS = [
           properties: { cliente_id: { type: 'STRING' }, cliente_nombre: { type: 'STRING' }, permanente: { type: 'BOOLEAN' } },
           required: ['cliente_nombre'],
         },
+      },
+      {
+        name: 'listar_presupuestos_archivados',
+        description: 'Muestra la lista de presupuestos borrados temporalmente (que se pueden restaurar). Usar SOLO si el usuario lo pide explícitamente, no aparecen en ninguna otra consulta.',
+        parameters: { type: 'OBJECT', properties: {} },
       },
       {
         name: 'restaurar_presupuesto',
