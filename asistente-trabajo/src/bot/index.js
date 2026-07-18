@@ -128,7 +128,8 @@ async function procesarTexto(ctx, texto) {
     await ctx.reply(respuesta);
   } catch (err) {
     console.error('Error conversando con IA:', err);
-    ctx.reply('Uy, tuve un problema procesando eso. Probá de nuevo en un momento.');
+    session.limpiarHistorial(ctx.chat.id);
+    ctx.reply('Uy, tuve un problema procesando eso. Ya reinicié la memoria de esta charla, probá de nuevo.');
   }
 }
 
@@ -309,6 +310,26 @@ async function ejecutarHerramienta(ctx, nombre, args) {
       const buffer = await pdf.generarDocumentoLibre({ titulo: args.titulo, contenido: args.contenido });
       await ctx.replyWithDocument({ source: buffer, filename: `${args.titulo || 'documento'}.pdf` });
       return { ok: true };
+    }
+
+    case 'eliminar_presupuesto': {
+      const cliente = await resolverClienteSimple(args.cliente_nombre);
+      if (!cliente) return { error: `No encontré ningún cliente llamado "${args.cliente_nombre}".` };
+      if (cliente.multiple) return { error: `Hay varios clientes parecidos: ${cliente.nombres.join(', ')}. Preguntale cuál es.` };
+      const ultimo = await presupuestos.obtenerUltimoPresupuesto(cliente.id);
+      if (!ultimo) return { error: `${cliente.nombre} no tiene presupuestos guardados.` };
+      await presupuestos.eliminarPresupuesto(ultimo.id);
+      return { ok: true, mensaje: `Presupuesto de ${cliente.nombre} borrado.` };
+    }
+
+    case 'eliminar_cobro': {
+      const cliente = await resolverClienteSimple(args.cliente_nombre);
+      if (!cliente) return { error: `No encontré ningún cliente llamado "${args.cliente_nombre}".` };
+      if (cliente.multiple) return { error: `Hay varios clientes parecidos: ${cliente.nombres.join(', ')}. Preguntale cuál es.` };
+      const lista = await cobros.obtenerCobrosPorCliente(cliente.id);
+      if (!lista.length) return { error: `${cliente.nombre} no tiene cobros/deudas guardadas.` };
+      await cobros.eliminarCobro(lista[0].id);
+      return { ok: true, mensaje: `Cobro de ${cliente.nombre} borrado.` };
     }
 
     default:
