@@ -22,6 +22,7 @@ CLIENTES CON EL MISMO NOMBRE (muy importante):
 PRESUPUESTOS CON VARIOS ÍTEMS:
 - Un presupuesto puede tener varios ítems (cada uno con su descripción y monto), no uno solo. Si el usuario te da varias cosas para presupuestar en un mismo pedido, cargalas como ítems separados.
 - Si el usuario pide "sacar" o "borrar" uno o varios ítems puntuales de un presupuesto (no todo el presupuesto), usá quitar_items_presupuesto, no elimines el presupuesto entero.
+- IMPORTANTE: al crear, agregar o quitar ítems de un presupuesto, por defecto NO generes el PDF — guardalo y confirmá en texto con el detalle (ítems y total). Generá el PDF (generar_pdf=true) únicamente si el usuario lo pide explícitamente con palabras como "pdf", "documento", "para enviarle", "mandámelo". Si el pedido original ya lo menciona, generalo directo en esa misma llamada.
 
 BORRAR: TEMPORAL VS. DEFINITIVO (muy importante):
 - Por defecto, cuando el usuario pida borrar un presupuesto o un cobro, hacelo de forma TEMPORAL (archivar): desaparece de las listas pero se puede restaurar después. Para esto, llamá a la herramienta con permanente=false.
@@ -69,13 +70,15 @@ const HERRAMIENTAS = [
       },
       {
         name: 'crear_presupuesto',
-        description: 'Crea un presupuesto nuevo (con uno o varios ítems) para un cliente y genera el PDF automáticamente.',
+        description:
+          'Crea un presupuesto nuevo (con uno o varios ítems) para un cliente. Por defecto NO genera el PDF, solo lo guarda y confirma en texto con el detalle. Generá el PDF (generar_pdf=true) únicamente si el usuario pide explícitamente el "pdf" o "documento".',
         parameters: {
           type: 'OBJECT',
           properties: {
             cliente_id: { type: 'STRING', description: 'Si ya sabés el ID exacto del cliente por una búsqueda anterior en esta charla, usalo en vez de cliente_nombre para evitar ambigüedad.' },
             cliente_nombre: { type: 'STRING' },
             items: { type: 'ARRAY', items: ITEM_SCHEMA, description: 'Lista de ítems del presupuesto, cada uno con su descripción y monto.' },
+            generar_pdf: { type: 'BOOLEAN', description: 'true SOLO si el usuario pidió explícitamente el PDF/documento.' },
             direccion_trabajo: { type: 'STRING' },
             alcance_texto: { type: 'STRING' },
             incluir_alcance: { type: 'BOOLEAN' },
@@ -92,7 +95,7 @@ const HERRAMIENTAS = [
         description: 'Agrega uno o más ítems nuevos al presupuesto más reciente de un cliente (sin crear un presupuesto nuevo).',
         parameters: {
           type: 'OBJECT',
-          properties: { cliente_id: { type: 'STRING' }, cliente_nombre: { type: 'STRING' }, items: { type: 'ARRAY', items: ITEM_SCHEMA } },
+          properties: { cliente_id: { type: 'STRING' }, cliente_nombre: { type: 'STRING' }, items: { type: 'ARRAY', items: ITEM_SCHEMA }, generar_pdf: { type: 'BOOLEAN', description: 'true SOLO si el usuario pidió explícitamente el PDF/documento.' } },
           required: ['cliente_nombre', 'items'],
         },
       },
@@ -106,6 +109,7 @@ const HERRAMIENTAS = [
             cliente_nombre: { type: 'STRING' },
             descripciones_items: { type: 'ARRAY', items: { type: 'STRING' }, description: 'Texto que identifica cada ítem a quitar (puede ser parcial).' },
             permanente: { type: 'BOOLEAN', description: 'true = no se puede recuperar. false (defecto) = se puede restaurar.' },
+            generar_pdf: { type: 'BOOLEAN', description: 'true SOLO si el usuario pidió explícitamente el PDF/documento.' },
           },
           required: ['cliente_nombre', 'descripciones_items'],
         },
