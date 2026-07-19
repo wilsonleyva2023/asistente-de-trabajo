@@ -4,10 +4,18 @@ const CATEGORIAS = {
   clientes: {
     titulo: '👥 Clientes',
     temas: {
-      crear: { titulo: 'Cargar un cliente', texto: '👥 CARGAR UN CLIENTE\n\nDecile algo como:\n"Creame un cliente Roberto Fernández, tel 221-555-1234, en Calle 12 N°845"\n\nSi hay riesgo de que se repita el nombre, agregale una referencia:\n"Sandra, la de Barrio Norte"' },
-      editar: { titulo: 'Corregir datos', texto: '✏️ CORREGIR DATOS\n\n"Corregile la dirección a Roberto, es Calle 12 N°850"\n"Está mal escrito, es Berisso no Berizo"\n\nCorrige el cliente ya cargado, no crea uno nuevo.' },
+      crear: { titulo: 'Cargar un cliente', texto: '👥 CARGAR UN CLIENTE\n\nDecile algo como:\n"Creame un cliente Roberto Fernández, tel 221-555-1234, en Calle 12 N°845"\n\nSi hay riesgo de que se repita el nombre, agregale una referencia:\n"Sandra, la de Barrio Norte"\n\nCon el nombre solo alcanza, podés completar el resto después.' },
+      editar: { titulo: 'Corregir datos', texto: '✏️ CORREGIR DATOS\n\n"Corregile la dirección a Roberto, es Calle 12 N°850"\n"Está mal escrito, es Berisso no Berizo"\n\nCorrige el cliente ya cargado, no crea uno nuevo. También tolera errores de tipeo al buscar.' },
       borrar: { titulo: 'Borrar / restaurar', texto: '🗑️ BORRAR O RESTAURAR\n\n"Borrá a Roberto" → queda archivado, se puede recuperar\n"Borralo definitivamente" → no se puede deshacer\n"Restaurá a Roberto" → lo recupera si lo borraste temporal' },
-      buscar: { titulo: 'Buscar / ver ficha', texto: '🔍 BUSCAR UN CLIENTE\n\n"Buscame a Roberto" o "mostrame la ficha de Roberto"\n\nTe muestra sus datos, presupuestos, trabajos y deudas.' },
+      buscar: { titulo: 'Buscar / ver ficha', texto: '🔍 BUSCAR UN CLIENTE\n\n"Buscame a Roberto" te da un resumen corto.\n"Dame la ficha completa de Roberto" te muestra todo el detalle.' },
+      categoria: { titulo: 'Categorías propias', texto: '🏷️ CATEGORÍAS\n\nCreás las categorías que quieras, libres:\n"Marcá a Roberto como arquitecto"\n"Es administrador de consorcio"\n\nDespués: "Dame todos los arquitectos" o "los comercios que me deben"' },
+      prioridad: { titulo: 'VIP / bloqueado', texto: '⭐🚫 PRIORIDAD Y BLOQUEO\n\n"Roberto es un cliente de confianza" → lo marca prioritario\n"No quiero trabajar más con Fulano" → lo marca bloqueado, para que te avise si intentás agendarle algo' },
+      datosextra: { titulo: 'Cumpleaños, horario, descuento', texto: '🎂⏰💵 DATOS EXTRA\n\n"El cumpleaños de Roberto es el 15 de marzo"\n"Roberto solo puede a la tarde"\n"A Roberto siempre le hago 10% de descuento"\n"Otro contacto de Roberto es Jennifer, 221-555-9999"' },
+      direcciones: { titulo: 'Varias direcciones', texto: '📍 VARIAS DIRECCIONES\n\n"Agregale a Roberto otra dirección, su local en Calle 50"\n\nÚtil si le hacés trabajos en más de un lugar.' },
+      duplicados: { titulo: 'Unir duplicados', texto: '🔗 UNIR CLIENTES DUPLICADOS\n\n"Combiná a Roberto y Roberto Fernández, son la misma persona"\n\nUne todo el historial en uno solo, sin perder nada.' },
+      telefono: { titulo: 'Buscar por teléfono', texto: '📞 BUSCAR POR TELÉFONO\n\n"¿Quién es el 221-555-1234?"\n\nÚtil si te llama un número que no tenés guardado en el celular.' },
+      silencio: { titulo: 'Clientes en silencio', texto: '🔇 CLIENTES EN SILENCIO\n\nEl asistente te avisa solo en el resumen semanal si un cliente lleva mucho tiempo sin contacto.\n\nTambién podés pedirlo: "dame los clientes en silencio"' },
+      satisfaccion: { titulo: 'Satisfacción', texto: '😊 SATISFACCIÓN\n\n"Roberto quedó muy conforme con el último trabajo"\n\nQueda registrado en su historial.' },
     },
   },
   presupuestos: {
