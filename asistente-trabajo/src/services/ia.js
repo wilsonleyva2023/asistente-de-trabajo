@@ -42,6 +42,8 @@ COBROS Y PAGOS (fluidez):
 
 TRABAJOS: registrar_trabajo puede incluir el gasto real en materiales (para saber la ganancia neta) y queda con garantía de 90 días por defecto (se puede cambiar).
 
+EQUIPOS: no son solo aires acondicionados — pueden ser termotanques, bombas de agua, calefones, cámaras de seguridad, o cualquier otro. Al registrar uno, si el usuario no menciona mantenimiento, cargalo simple sin insistir en preguntarlo. Mantené el foco en el último equipo del que se habló (equipo activo), igual que con clientes/presupuestos/visitas. Si un cliente ya tiene un equipo muy parecido (mismo tipo), preguntale si es una actualización del mismo antes de cargar uno nuevo duplicado.
+
 AGENDA Y VISITAS (agendar_trabajo, no crear_recordatorio, cuando sea una visita a un cliente en fecha/hora concretas):
 - Al agendar, preguntá o asumí un aviso previo razonable (ej: 2 horas antes) si el usuario no lo aclara, pero dejá que él lo elija si quiere ("avisame el día anterior", "avisame 3 horas antes").
 - Cuando el usuario diga que terminó un trabajo agendado, usá completar_visita — y ofrecele registrar el trabajo realizado y/o generar el recibo en el mismo intercambio.
@@ -61,7 +63,13 @@ AGENDA Y VISITAS (agendar_trabajo, no crear_recordatorio, cuando sea una visita 
 - Usá consultar_dias_libres si el usuario pregunta qué día tiene libre para ofrecerle a un cliente nuevo.
 - Usá contar_visitas_cliente si preguntan si un cliente es frecuente o cuántas veces lo visitaron.
 - Usá consultar_reagendados_frecuentes si preguntan por clientes problemáticos con la agenda.
-- Antes de agendar, si hay otra visita muy cerca en el horario, el sistema te va a avisar del choque — contáselo al usuario y preguntale si sigue igual o cambia el horario.
+- Antes de agendar, si hay otra visita muy cerca en el horario, el sistema te va a avisar del choque — contáselo al usuario y preguntale si sigue igual o cambia el horario. Lo mismo si choca con un horario bloqueado propio del usuario.
+- Cuando agendás una visita, si el resultado indica que el cliente tiene una deuda pendiente o un mantenimiento próximo, comentáselo al usuario en la misma respuesta (ej: "Che, de paso Roberto te debe $20.000, aprovechá para cobrarle" o "tiene un mantenimiento de aire próximo, ¿lo sumamos a la misma visita?").
+- Cuando el usuario marque una visita como completada, en la misma conversación ofrecele (sin que tenga que pedirlo aparte) registrar el trabajo, cobrar, y preguntar si quedó conforme — no hace falta esperar tres mensajes separados.
+- Mantené el foco en la última visita de la que se habló en la charla (visita activa), igual que con el cliente/presupuesto/cobro.
+- Cuando el usuario reagende o cancele una visita, ofrecele de una un mensaje pre-armado para avisarle al cliente del cambio.
+- Si el usuario pide agendar sin dar una hora exacta ("agendame a Roberto esta semana"), usá consultar_dias_libres primero para sugerirle un hueco disponible en vez de preguntarle cuál hora quiere a ciegas.
+- Si un mensaje trae varias instrucciones relacionadas a la misma visita (ej: hora + qué llevar), cargalas todas juntas en la misma llamada a agendar_trabajo.
 
 RECORDATORIOS: para avisos generales que NO son una visita a un cliente (ej: "recordame pagar el monotributo", "ir al doctor"). Se pueden editar y eliminar buscando por el texto, y consultar por rango con consultar_recordatorios.
 - MUY IMPORTANTE: cuando el usuario pregunte de forma general "qué tengo hoy/mañana/esta semana" o "mi agenda", sin aclarar si se refiere solo a trabajos con clientes, llamá TANTO a consultar_agenda COMO a consultar_recordatorios con el mismo rango, para no dejar afuera nada de lo que agendó (visitas a clientes Y recordatorios sueltos). Se muestran en mensajes separados, no hace falta mezclarlos en un solo texto.
@@ -536,18 +544,90 @@ const HERRAMIENTAS = [
       // ---- EQUIPOS ----
       {
         name: 'registrar_equipo',
-        description: 'Registra un equipo instalado y programa mantenimiento futuro recurrente.',
+        description: 'Registra un equipo instalado (termotanque, split de aire, bomba, calefón, cámara, o cualquier otro) y programa mantenimiento futuro recurrente si corresponde. No pidas mantenimiento si el usuario no lo menciona, se puede cargar simple.',
         parameters: {
           type: 'OBJECT',
           properties: {
             cliente_id: CID,
             cliente_nombre: CNOM,
-            tipo: { type: 'STRING' },
+            tipo: { type: 'STRING', description: 'Tipo de equipo: termotanque, split de aire, bomba de agua, calefón, cámara de seguridad, etc.' },
+            marca: { type: 'STRING' },
+            modelo: { type: 'STRING' },
+            numero_serie: { type: 'STRING' },
             meses_mantenimiento: { type: 'NUMBER' },
             aviso_automatico: { type: 'BOOLEAN' },
+            garantia_fabrica_meses: { type: 'NUMBER' },
+            vida_util_anios: { type: 'NUMBER' },
           },
           required: ['cliente_nombre', 'tipo'],
         },
+      },
+      {
+        name: 'editar_equipo',
+        description: 'Corrige datos de un equipo ya cargado (marca, modelo, tipo, etc).',
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            cliente_id: CID,
+            cliente_nombre: CNOM,
+            equipo_texto: { type: 'STRING', description: 'Tipo o marca del equipo a editar, si el cliente tiene varios.' },
+            nuevo_tipo: { type: 'STRING' },
+            nueva_marca: { type: 'STRING' },
+            nuevo_modelo: { type: 'STRING' },
+            nuevo_numero_serie: { type: 'STRING' },
+            nuevos_repuestos_necesarios: { type: 'STRING' },
+          },
+          required: ['cliente_nombre'],
+        },
+      },
+      {
+        name: 'consultar_equipos_cliente',
+        description: 'Lista todos los equipos instalados de un cliente.',
+        parameters: { type: 'OBJECT', properties: { cliente_id: CID, cliente_nombre: CNOM }, required: ['cliente_nombre'] },
+      },
+      {
+        name: 'consultar_historial_mantenimientos',
+        description: 'Muestra los mantenimientos ya realizados a un equipo de un cliente.',
+        parameters: { type: 'OBJECT', properties: { cliente_id: CID, cliente_nombre: CNOM, equipo_texto: { type: 'STRING' } }, required: ['cliente_nombre'] },
+      },
+      {
+        name: 'consultar_mantenimientos_vencidos',
+        description: 'Lista mantenimientos que ya vencieron hace tiempo y todavía no se hicieron.',
+        parameters: { type: 'OBJECT', properties: {} },
+      },
+      {
+        name: 'consultar_estadistica_equipos',
+        description: 'Cuenta cuántos equipos de cada tipo instalaste en total.',
+        parameters: { type: 'OBJECT', properties: {} },
+      },
+      {
+        name: 'consultar_equipos_para_reemplazo',
+        description: 'Lista equipos que se acercan al fin de su vida útil estimada.',
+        parameters: { type: 'OBJECT', properties: {} },
+      },
+      {
+        name: 'generar_ficha_equipo',
+        description: 'Genera un PDF con la ficha técnica de un equipo de un cliente.',
+        parameters: { type: 'OBJECT', properties: { cliente_id: CID, cliente_nombre: CNOM, equipo_texto: { type: 'STRING' } }, required: ['cliente_nombre'] },
+      },
+      {
+        name: 'registrar_mantenimiento_realizado',
+        description: 'Registra que se hizo el mantenimiento de un equipo, con el gasto en repuestos si corresponde, y reprograma la próxima fecha.',
+        parameters: {
+          type: 'OBJECT',
+          properties: { cliente_id: CID, cliente_nombre: CNOM, equipo_texto: { type: 'STRING' }, gasto_repuestos: { type: 'NUMBER' }, descripcion: { type: 'STRING' } },
+          required: ['cliente_nombre'],
+        },
+      },
+      {
+        name: 'anotar_repuestos_necesarios',
+        description: 'Anota qué repuestos se van a necesitar para el próximo mantenimiento de un equipo.',
+        parameters: { type: 'OBJECT', properties: { cliente_id: CID, cliente_nombre: CNOM, equipo_texto: { type: 'STRING' }, repuestos: { type: 'STRING' } }, required: ['cliente_nombre', 'repuestos'] },
+      },
+      {
+        name: 'consultar_mantenimientos_agrupables',
+        description: 'Lista clientes con varios equipos cuyo mantenimiento vence cerca en el tiempo, para agruparlos en una sola visita.',
+        parameters: { type: 'OBJECT', properties: {} },
       },
       {
         name: 'eliminar_equipo',
@@ -558,7 +638,7 @@ const HERRAMIENTAS = [
       // ---- AGENDA / VISITAS ----
       {
         name: 'agendar_trabajo',
-        description: 'Agenda una visita a un cliente en fecha y hora concretas, con aviso previo.',
+        description: 'Agenda una visita a un cliente en fecha y hora concretas, con aviso previo. Antes de agendar, si el cliente tiene una deuda pendiente o un mantenimiento próximo, se te va a avisar para que se lo comentes al usuario.',
         parameters: {
           type: 'OBJECT',
           properties: {
@@ -567,6 +647,9 @@ const HERRAMIENTAS = [
             descripcion: { type: 'STRING' },
             fecha_hora_iso: { type: 'STRING' },
             aviso_horas_antes: { type: 'NUMBER', description: 'Cuántas horas antes avisar (24 = un día antes).' },
+            que_llevar: { type: 'STRING', description: 'Herramientas o materiales a llevar, si el usuario lo menciona.' },
+            duracion_minutos: { type: 'NUMBER', description: 'Cuánto va a durar la visita, si el usuario lo menciona (por defecto 60).' },
+            recurrencia_meses: { type: 'NUMBER', description: 'Si la visita se repite cada tantos meses, poné el número (ej: 3 para trimestral).' },
           },
           required: ['cliente_nombre', 'descripcion', 'fecha_hora_iso'],
         },
@@ -584,6 +667,11 @@ const HERRAMIENTAS = [
       {
         name: 'cancelar_visita',
         description: 'Cancela la próxima visita agendada de un cliente (sin reagendar).',
+        parameters: { type: 'OBJECT', properties: { cliente_id: CID, cliente_nombre: CNOM, motivo: { type: 'STRING' } }, required: ['cliente_nombre'] },
+      },
+      {
+        name: 'confirmar_visita',
+        description: 'Marca que el cliente confirmó explícitamente que va a estar en la visita agendada.',
         parameters: { type: 'OBJECT', properties: { cliente_id: CID, cliente_nombre: CNOM }, required: ['cliente_nombre'] },
       },
       {
@@ -608,8 +696,37 @@ const HERRAMIENTAS = [
       },
       {
         name: 'generar_agenda_pdf',
-        description: "Genera un PDF con la agenda de un rango ('semana' por defecto).",
+        description: "Genera un PDF con la agenda de un rango ('semana' por defecto). También sirve como calendario mensual si rango='mes'.",
         parameters: { type: 'OBJECT', properties: { rango: { type: 'STRING' } } },
+      },
+      {
+        name: 'exportar_agenda_calendario',
+        description: 'Exporta la agenda de un rango en formato .ics para importar a Google Calendar u otro calendario.',
+        parameters: { type: 'OBJECT', properties: { rango: { type: 'STRING' } } },
+      },
+      {
+        name: 'consultar_historial_visitas',
+        description: 'Muestra el historial detallado de visitas pasadas a un cliente, con fechas.',
+        parameters: { type: 'OBJECT', properties: { cliente_id: CID, cliente_nombre: CNOM }, required: ['cliente_nombre'] },
+      },
+      {
+        name: 'bloquear_horario',
+        description: 'Bloquea un horario fijo propio (ej: almuerzo) para que el sistema avise si intentan agendar algo ahí.',
+        parameters: {
+          type: 'OBJECT',
+          properties: { hora_inicio: { type: 'STRING', description: "Formato HH:MM" }, hora_fin: { type: 'STRING' }, descripcion: { type: 'STRING' } },
+          required: ['hora_inicio', 'hora_fin'],
+        },
+      },
+      {
+        name: 'consultar_horas_trabajadas',
+        description: "Suma las horas trabajadas (visitas completadas) en un rango. rango: 'semana' (defecto) o 'mes'.",
+        parameters: { type: 'OBJECT', properties: { rango: { type: 'STRING' } } },
+      },
+      {
+        name: 'consultar_resumen_dia',
+        description: 'Da un resumen completo de cómo viene el día: agenda + cobros pendientes de hoy + alertas relevantes, todo junto.',
+        parameters: { type: 'OBJECT', properties: {} },
       },
 
       // ---- RECORDATORIOS ----
