@@ -42,6 +42,9 @@ function iniciarTareasProgramadas() {
   // Resumen de fin de día, a las 19:00
   cron.schedule('0 19 * * *', () => enviarResumenDelDia(CHAT_ID), { timezone: TZ });
 
+  // Aviso si mañana está completamente libre
+  cron.schedule('0 18 * * *', () => avisarSiDiaLibre(CHAT_ID), { timezone: TZ });
+
   // Reprograma solos los recordatorios recurrentes (semanales/mensuales)
   cron.schedule('5 0 * * *', () => recordatorios.avanzarRecurrentes(), { timezone: TZ });
 
@@ -81,6 +84,15 @@ async function enviarResumenSemanal(chatId) {
 
   const rechazados = await presupuestos.rechazadosParaReintentar(3);
   if (rechazados.length) msg += `🔁 Presupuestos rechazados que podrías reintentar: ${rechazados.length}\n`;
+
+  const vencidosSinHacer = await equipos.mantenimientosVencidosSinHacer(7);
+  if (vencidosSinHacer.length) msg += `\n🔧 Mantenimientos vencidos sin hacer: ${vencidosSinHacer.length}\n`;
+
+  const paraReemplazo = await equipos.equiposParaReemplazo();
+  if (paraReemplazo.length) msg += `⚙️ Equipos cerca del fin de su vida útil: ${paraReemplazo.length}\n`;
+
+  const agrupables = await equipos.clientesConMantenimientosAgrupables(15);
+  if (agrupables.length) msg += `📦 Clientes con varios mantenimientos para agrupar en una visita: ${agrupables.length}\n`;
 
   await bot.telegram.sendMessage(chatId, msg);
 }
@@ -140,6 +152,14 @@ async function revisarCobrosVencidos(chatId) {
     msg += `• ${c.clientes?.nombre} - $${restante} (vencía ${c.fecha_vencimiento})\n`;
   });
   await bot.telegram.sendMessage(chatId, msg);
+}
+
+async function avisarSiDiaLibre(chatId) {
+  const { desde, hasta } = rangoFechas('manana');
+  const lista = await visitas.visitasEnRango(desde, hasta);
+  if (!lista.length) {
+    await bot.telegram.sendMessage(chatId, '📅 Mañana tenés el día completamente libre. Podés aprovechar para trámites, buscar trabajo nuevo, o descansar. 😌');
+  }
 }
 
 async function enviarResumenDelDia(chatId) {
