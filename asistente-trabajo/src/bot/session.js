@@ -40,4 +40,52 @@ function obtenerClienteActivo(chatId) {
   return clienteActivo.get(chatId) || null;
 }
 
-module.exports = { get, set, limpiar, obtenerHistorial, podarHistorial, limpiarHistorial, setClienteActivo, obtenerClienteActivo };
+const presupuestoActivo = new Map();
+function setPresupuestoActivo(chatId, presupuestoId) {
+  presupuestoActivo.set(chatId, presupuestoId);
+}
+function obtenerPresupuestoActivo(chatId) {
+  return presupuestoActivo.get(chatId) || null;
+}
+
+const modoRapido = new Map();
+function setModoRapido(chatId, activo) {
+  modoRapido.set(chatId, activo);
+}
+function esModoRapido(chatId) {
+  return !!modoRapido.get(chatId);
+}
+
+const ultimaAccion = new Map();
+function guardarUltimaAccion(chatId, accion) {
+  ultimaAccion.set(chatId, accion);
+}
+function obtenerUltimaAccion(chatId) {
+  return ultimaAccion.get(chatId) || null;
+}
+
+const ultimaFotoUrl = new Map();
+function setUltimaFotoUrl(chatId, url) {
+  ultimaFotoUrl.set(chatId, url);
+}
+function obtenerUltimaFotoUrl(chatId) {
+  return ultimaFotoUrl.get(chatId) || null;
+}
+
+const cobroActivo = new Map();
+function setCobroActivo(chatId, cobroId) {
+  cobroActivo.set(chatId, cobroId);
+}
+function obtenerCobroActivo(chatId) {
+  return cobroActivo.get(chatId) || null;
+}
+
+module.exports = {
+  get, set, limpiar, obtenerHistorial, podarHistorial, limpiarHistorial,
+  setClienteActivo, obtenerClienteActivo,
+  setPresupuestoActivo, obtenerPresupuestoActivo,
+  setModoRapido, esModoRapido,
+  guardarUltimaAccion, obtenerUltimaAccion,
+  setUltimaFotoUrl, obtenerUltimaFotoUrl,
+  setCobroActivo, obtenerCobroActivo,
+};
