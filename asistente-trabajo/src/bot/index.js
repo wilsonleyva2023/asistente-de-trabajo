@@ -13,6 +13,9 @@ const recordatorios = require('../services/recordatorios');
 const notas = require('../services/notas');
 const pdf = require('../services/pdf');
 const ia = require('../services/ia');
+const storage = require('../services/storage');
+const fotos = require('../services/fotos');
+const plantillas = require('../services/plantillas');
 
 const agenteSinKeepAlive = new https.Agent({ keepAlive: false });
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN, { telegram: { agent: agenteSinKeepAlive } });
@@ -84,6 +87,11 @@ bot.command('agenda', (ctx) => agendaRapida(ctx, 'hoy', 'hoy'));
 bot.command('hoy', (ctx) => agendaRapida(ctx, 'hoy', 'hoy'));
 bot.command('manana', (ctx) => agendaRapida(ctx, 'manana', 'mañana'));
 bot.command('semana', (ctx) => agendaRapida(ctx, 'semana', 'esta semana'));
+bot.command('cobrado', (ctx) => ejecutarHerramienta(ctx, 'consultar_estado_caja', {}).then((r) => {
+  const partes = Object.entries(r.cobrado_hoy_por_metodo || {}).map(([m, v]) => `${m}: $${v}`).join(', ') || 'nada todavía';
+  return ctx.reply(`💰 Cobrado hoy: ${partes}`);
+}));
+bot.command('pendiente', (ctx) => ejecutarHerramienta(ctx, 'consultar_pendientes', {}));
 
 // ================= ROUTER PRINCIPAL =================
 
@@ -153,9 +161,11 @@ async function procesarConArchivo(ctx, texto, buffer, mimeType) {
 
 bot.on('photo', async (ctx) => {
   try {
-    const fotos = ctx.message.photo;
-    const url = await ctx.telegram.getFileLink(fotos[fotos.length - 1].file_id);
+    const tamanos = ctx.message.photo;
+    const url = await ctx.telegram.getFileLink(tamanos[tamanos.length - 1].file_id);
     const buffer = Buffer.from(await (await fetch(url)).arrayBuffer());
+    const urlSubida = await storage.subirFoto(buffer, `foto-${Date.now()}.jpg`);
+    session.setUltimaFotoUrl(ctx.chat.id, urlSubida);
     const texto = ctx.message.caption || 'Te mando una foto, fijate qué es y decime qué te parece o ayudame con lo que corresponda.';
     await procesarConArchivo(ctx, texto, buffer, 'image/jpeg');
   } catch (err) {
@@ -423,21 +433,119 @@ async function ejecutarHerramienta(ctx, nombre, args) {
       return { cantidad: lista.length, trabajos: lista.map((t) => t.descripcion) };
     }
 
+    case 'guardar_plantilla_presupuesto': {
+      await plantillas.guardarPlantilla(args.nombre, args.items || []);
+      return { ok: true };
+    }
+    case 'crear_presupuesto_desde_plantilla': {
+      const cliente = await resolverCliente(ctx, args);
+      if (!cliente) return errorClienteNoEncontrado(args.cliente_nombre);
+      if (cliente.multiple) return errorClienteAmbiguo(cliente.opciones);
+      const plantilla = await plantillas.buscarPlantilla(args.nombre_plantilla || '');
+      if (!plantilla) return { error: `No encontré ninguna plantilla llamada "${args.nombre_plantilla}".` };
+      const creado = await presupuestos.crearPresupuesto({ cliente_id: cliente.id, items: plantilla.items });
+      const vencimiento = new Date(); vencimiento.setDate(vencimiento.getDate() + 15);
+      await cobros.crearCobro({ cliente_id: cliente.id, presupuesto_id: creado.id, monto: creado.monto, fecha_vencimiento: vencimiento.toISOString().slice(0, 10) });
+      session.setPresupuestoActivo(ctx.chat.id, creado.id);
+      return { ok: true, items: creado.items.map((i) => ({ descripcion: i.descripcion, monto: i.monto })), total: creado.monto, cliente_id: cliente.id };
+    }
+    case 'repetir_presupuesto': {
+      const cliente = await resolverCliente(ctx, args);
+      if (!cliente) return errorClienteNoEncontrado(args.cliente_nombre);
+      if (cliente.multiple) return errorClienteAmbiguo(cliente.opciones);
+      const nuevo = await presupuestos.repetirPresupuesto(cliente.id, { monto: args.nuevo_monto });
+      if (!nuevo) return { error: `${cliente.nombre} no tiene un presupuesto anterior para repetir.` };
+      const vencimiento = new Date(); vencimiento.setDate(vencimiento.getDate() + 15);
+      await cobros.crearCobro({ cliente_id: cliente.id, presupuesto_id: nuevo.id, monto: nuevo.monto, fecha_vencimiento: vencimiento.toISOString().slice(0, 10) });
+      session.setPresupuestoActivo(ctx.chat.id, nuevo.id);
+      return { ok: true, items: nuevo.items.map((i) => ({ descripcion: i.descripcion, monto: i.monto })), total: nuevo.monto, cliente_id: cliente.id };
+    }
+    case 'crear_presupuestos_lote': {
+      const resultados = [];
+      for (const item of args.lista || []) {
+        const cliente = await resolverCliente(ctx, { cliente_nombre: item.cliente_nombre });
+        if (!cliente || cliente.multiple) { resultados.push({ cliente_nombre: item.cliente_nombre, error: true }); continue; }
+        const creado = await presupuestos.crearPresupuesto({ cliente_id: cliente.id, items: item.items });
+        const vencimiento = new Date(); vencimiento.setDate(vencimiento.getDate() + 15);
+        await cobros.crearCobro({ cliente_id: cliente.id, presupuesto_id: creado.id, monto: creado.monto, fecha_vencimiento: vencimiento.toISOString().slice(0, 10) });
+        resultados.push({ cliente_nombre: cliente.nombre, total: creado.monto, ok: true });
+      }
+      return { resultados };
+    }
+    case 'deshacer_ultima_accion': {
+      const ultima = session.obtenerUltimaAccion(ctx.chat.id);
+      if (!ultima) return { error: 'No tengo registrada ninguna acción reciente para deshacer.' };
+      return { error: 'Por ahora puedo avisarte cuál fue la última acción, pero deshacerla automáticamente todavía no está soportado para este tipo de cambio. Decime qué corregir y lo hago manualmente.', ultima_accion: ultima };
+    }
+    case 'consultar_historial_presupuesto': {
+      const r = await resolverClienteConPresupuesto(args);
+      if (r.error) return r;
+      const historial = await presupuestos.obtenerHistorial(r.presupuesto.id);
+      return { cambios: historial.map((h) => ({ cambio: h.cambio, fecha: h.creado_en })) };
+    }
+    case 'consultar_tasa_conversion': {
+      const mes = args.mes_iso || new Date().toISOString().slice(0, 7);
+      const desde = `${mes}-01T00:00:00.000Z`;
+      const finMes = new Date(`${mes}-01`); finMes.setMonth(finMes.getMonth() + 1);
+      const resultado = await presupuestos.tasaConversion(desde, finMes.toISOString());
+      return resultado;
+    }
+    case 'contar_presupuestos_hoy': {
+      const cantidadPresupuestos = await presupuestos.contarHoy();
+      const cantidadRecibos = await recibos.contarHoy();
+      return { presupuestos_hoy: cantidadPresupuestos, recibos_hoy: cantidadRecibos };
+    }
+    case 'activar_modo_rapido': {
+      session.setModoRapido(ctx.chat.id, args.activar !== false);
+      return { ok: true, activo: args.activar !== false };
+    }
+    case 'exportar_mes_presupuestos': {
+      const mes = args.mes_iso || new Date().toISOString().slice(0, 7);
+      const desde = `${mes}-01T00:00:00.000Z`;
+      const finMes = new Date(`${mes}-01`); finMes.setMonth(finMes.getMonth() + 1);
+      const lista = await presupuestos.presupuestosEnRango(desde, finMes.toISOString());
+      if (!lista.length) { await ctx.reply(`No hay presupuestos en ${mes}.`); return { cantidad: 0 }; }
+      const dias = [{ etiqueta: `Presupuestos de ${mes}`, items: lista.map((p) => ({ hora: '', texto: `${p.clientes?.nombre}: ${p.descripcion} - $${p.monto} [${p.estado}]` })) }];
+      const buffer = await pdf.generarAgendaPdf({ titulo: `Presupuestos - ${mes}`, dias });
+      await enviarDocumentoConReintento(ctx, { source: buffer, filename: `presupuestos-${mes}.pdf` });
+      return { ok: true, cantidad: lista.length };
+    }
+    case 'guardar_foto': {
+      const cliente = await resolverCliente(ctx, args);
+      if (!cliente) return errorClienteNoEncontrado(args.cliente_nombre);
+      if (cliente.multiple) return errorClienteAmbiguo(cliente.opciones);
+      const url = session.obtenerUltimaFotoUrl(ctx.chat.id);
+      if (!url) return { error: 'No tengo ninguna foto reciente para guardar. Mandala primero.' };
+      const activo = await presupuestos.obtenerUltimoPresupuesto(cliente.id);
+      await fotos.guardarFoto({ cliente_id: cliente.id, presupuesto_id: activo?.id || null, url, descripcion: args.descripcion || null });
+      return { ok: true };
+    }
+    case 'consultar_rentabilidad': {
+      const cliente = await resolverCliente(ctx, args);
+      if (!cliente) return errorClienteNoEncontrado(args.cliente_nombre);
+      if (cliente.multiple) return errorClienteAmbiguo(cliente.opciones);
+      const ultimo = await trabajos.obtenerUltimoTrabajo(cliente.id);
+      if (!ultimo) return { error: `${cliente.nombre} no tiene trabajos registrados.` };
+      return await trabajos.rentabilidad(ultimo.id);
+    }
+
     case 'crear_presupuesto': {
       const cliente = await resolverCliente(ctx, args);
       if (!cliente) return errorClienteNoEncontrado(args.cliente_nombre);
       if (cliente.multiple) return errorClienteAmbiguo(cliente.opciones);
       const items = args.items && args.items.length ? args.items : [];
       if (!items.length) return { error: 'No se especificaron ítems para el presupuesto.' };
-      const creado = await presupuestos.crearPresupuesto({ cliente_id: cliente.id, items });
+      const creado = await presupuestos.crearPresupuesto({ cliente_id: cliente.id, items, dias_validez: args.dias_validez || 15 });
       const vencimiento = new Date();
-      vencimiento.setDate(vencimiento.getDate() + 15);
-      await cobros.crearCobro({ cliente_id: cliente.id, presupuesto_id: creado.id, monto: creado.monto, fecha_vencimiento: vencimiento.toISOString().slice(0, 10) });
+      vencimiento.setDate(vencimiento.getDate() + (args.dias_validez || 15));
+      const cobro = await cobros.crearCobro({ cliente_id: cliente.id, presupuesto_id: creado.id, monto: creado.monto, fecha_vencimiento: vencimiento.toISOString().slice(0, 10) });
+      session.setPresupuestoActivo(ctx.chat.id, creado.id);
+      session.guardarUltimaAccion(ctx.chat.id, { tipo: 'crear_presupuesto', presupuesto_id: creado.id, cobro_id: cobro.id, descripcion: `presupuesto de ${cliente.nombre}` });
       if (!args.generar_pdf) {
         return { ok: true, mensaje: 'Presupuesto guardado (sin PDF). Deuda registrada.', numero: numFmt(creado.numero), items: creado.items.map((i) => ({ descripcion: i.descripcion, monto: i.monto })), total: creado.monto, cliente_id: cliente.id };
       }
       const buffer = await pdf.generarPresupuesto({
-        cliente, items, numero: numFmt(creado.numero), direccionTrabajo: args.direccion_trabajo, alcance: args.alcance_texto,
+        cliente, items, numero: numFmt(creado.numero), diasValidez: args.dias_validez || 15, direccionTrabajo: args.direccion_trabajo, alcance: args.alcance_texto,
         incluirAlcance: args.incluir_alcance !== false, garantia: args.garantia_texto, incluirGarantia: args.incluir_garantia !== false,
         formaPago: args.forma_pago_texto, incluirFormaPago: args.incluir_forma_pago !== false,
       });
@@ -556,13 +664,19 @@ async function ejecutarHerramienta(ctx, nombre, args) {
         }
       }
       if (!concepto && !monto && !items) return { error: `Faltan datos y ${cliente.nombre} no tiene presupuesto activo. Preguntale al usuario.` };
-      const registrado = await recibos.crearRecibo({ cliente_id: cliente.id, concepto, monto });
-      const buffer = await pdf.generarRecibo({ cliente, items, monto, concepto, numero: numFmt(registrado.numero) });
+      const registrado = await recibos.crearRecibo({ cliente_id: cliente.id, concepto, monto, es_pago_parcial: !!args.es_pago_parcial });
+      const buffer = await pdf.generarRecibo({ cliente, items, monto, concepto, numero: numFmt(registrado.numero), esPagoParcial: !!args.es_pago_parcial });
       await enviarDocumentoConReintento(ctx, { source: buffer, filename: `recibo-${cliente.nombre}.pdf` });
       const cobrosCliente = await cobros.obtenerCobrosPorCliente(cliente.id);
       const pendiente = cobrosCliente.find((c) => c.estado === 'pendiente');
-      if (pendiente) await cobros.marcarCobrado(pendiente.id);
-      return { ok: true, mensaje: 'Recibo generado y enviado.', deuda_saldada: !!pendiente, cliente_id: cliente.id };
+      if (pendiente) {
+        if (args.es_pago_parcial) {
+          await cobros.registrarPagoParcial(pendiente.id, monto);
+        } else {
+          await cobros.marcarCobrado(pendiente.id);
+        }
+      }
+      return { ok: true, mensaje: 'Recibo generado y enviado.', deuda_saldada: !!pendiente && !args.es_pago_parcial, cliente_id: cliente.id };
     }
 
     // ---- COBROS ----
@@ -584,7 +698,8 @@ async function ejecutarHerramienta(ctx, nombre, args) {
       const lista = await cobros.obtenerCobrosPorCliente(cliente.id);
       const pendiente = lista.find((c) => c.estado === 'pendiente');
       if (!pendiente) return { error: `${cliente.nombre} no tiene cobros pendientes.` };
-      const actualizado = await cobros.registrarPagoParcial(pendiente.id, args.monto);
+      const actualizado = await cobros.registrarPagoParcial(pendiente.id, args.monto, args.metodo_pago);
+      session.setCobroActivo(ctx.chat.id, pendiente.id);
       const restante = Number(actualizado.monto) - Number(actualizado.monto_pagado);
       return { ok: true, estado: actualizado.estado, restante: restante > 0 ? restante : 0, cliente_id: cliente.id };
     }
@@ -607,6 +722,123 @@ async function ejecutarHerramienta(ctx, nombre, args) {
       await cobros.restaurarCobro(archivado.id);
       return { ok: true };
     }
+    case 'consultar_historial_pagos': {
+      const cliente = await resolverCliente(ctx, args);
+      if (!cliente) return errorClienteNoEncontrado(args.cliente_nombre);
+      if (cliente.multiple) return errorClienteAmbiguo(cliente.opciones);
+      const lista = await cobros.historialPagos(cliente.id);
+      return { pagos: lista.map((c) => ({ monto: c.monto, fecha: c.fecha_cobro, metodo: c.metodo_pago || 'sin especificar' })) };
+    }
+    case 'crear_plan_cuotas': {
+      const cliente = await resolverCliente(ctx, args);
+      if (!cliente) return errorClienteNoEncontrado(args.cliente_nombre);
+      if (cliente.multiple) return errorClienteAmbiguo(cliente.opciones);
+      const lista = await cobros.obtenerCobrosPorCliente(cliente.id);
+      const pendiente = lista.find((c) => c.estado === 'pendiente');
+      if (!pendiente) return { error: `${cliente.nombre} no tiene una deuda pendiente para dividir en cuotas.` };
+      const primeraFecha = args.primera_fecha_iso || new Date().toISOString().slice(0, 10);
+      const cuotas = await cobros.crearCuotas(pendiente.id, args.cantidad_cuotas, Number(pendiente.monto) - Number(pendiente.monto_pagado || 0), primeraFecha);
+      session.setCobroActivo(ctx.chat.id, pendiente.id);
+      return { ok: true, cuotas: cuotas.map((c) => ({ numero: c.numero_cuota, monto: c.monto, vence: c.fecha_vencimiento })) };
+    }
+    case 'pagar_cuota': {
+      const cliente = await resolverCliente(ctx, args);
+      if (!cliente) return errorClienteNoEncontrado(args.cliente_nombre);
+      if (cliente.multiple) return errorClienteAmbiguo(cliente.opciones);
+      const lista = await cobros.obtenerCobrosPorCliente(cliente.id);
+      const pendiente = lista.find((c) => c.estado === 'pendiente') || lista[0];
+      if (!pendiente) return { error: `${cliente.nombre} no tiene un plan de cuotas.` };
+      const cuotas = await cobros.cuotasPorCobro(pendiente.id);
+      const cuota = cuotas.find((c) => c.numero_cuota === args.numero_cuota);
+      if (!cuota) return { error: `No encontré la cuota número ${args.numero_cuota}.` };
+      await cobros.pagarCuota(cuota.id);
+      return { ok: true };
+    }
+    case 'aplicar_recargo': {
+      const cliente = await resolverCliente(ctx, args);
+      if (!cliente) return errorClienteNoEncontrado(args.cliente_nombre);
+      if (cliente.multiple) return errorClienteAmbiguo(cliente.opciones);
+      const lista = await cobros.obtenerCobrosPorCliente(cliente.id);
+      const pendiente = lista.find((c) => c.estado === 'pendiente');
+      if (!pendiente) return { error: `${cliente.nombre} no tiene una deuda pendiente.` };
+      const actualizado = await cobros.aplicarRecargo(pendiente.id, args.porcentaje);
+      return { ok: true, nuevo_monto: actualizado.monto };
+    }
+    case 'aplicar_descuento_pronto_pago': {
+      const cliente = await resolverCliente(ctx, args);
+      if (!cliente) return errorClienteNoEncontrado(args.cliente_nombre);
+      if (cliente.multiple) return errorClienteAmbiguo(cliente.opciones);
+      const lista = await cobros.obtenerCobrosPorCliente(cliente.id);
+      const pendiente = lista.find((c) => c.estado === 'pendiente');
+      if (!pendiente) return { error: `${cliente.nombre} no tiene una deuda pendiente.` };
+      await cobros.aplicarDescuentoProntoPago(pendiente.id, args.porcentaje, args.fecha_limite_iso);
+      return { ok: true };
+    }
+    case 'guardar_comprobante_pago': {
+      const cliente = await resolverCliente(ctx, args);
+      if (!cliente) return errorClienteNoEncontrado(args.cliente_nombre);
+      if (cliente.multiple) return errorClienteAmbiguo(cliente.opciones);
+      const url = session.obtenerUltimaFotoUrl(ctx.chat.id);
+      if (!url) return { error: 'No tengo ninguna foto reciente para guardar como comprobante. Mandala primero.' };
+      const lista = await cobros.obtenerCobrosPorCliente(cliente.id);
+      const pendiente = lista.find((c) => c.estado === 'pendiente');
+      await fotos.guardarFoto({ cliente_id: cliente.id, cobro_id: pendiente?.id || null, url, descripcion: 'Comprobante de pago' });
+      return { ok: true };
+    }
+    case 'consultar_deudas_por_antiguedad': {
+      const grupos = await cobros.deudasPorAntiguedad();
+      return {
+        recientes: grupos.recientes.map((c) => c.clientes?.nombre),
+        entre_30_y_60_dias: grupos.treinta.map((c) => c.clientes?.nombre),
+        mas_de_60_dias: grupos.sesenta.map((c) => c.clientes?.nombre),
+      };
+    }
+    case 'consultar_estado_caja': {
+      const pendientes = await cobros.cobrosPendientes();
+      const totalPendiente = pendientes.reduce((acc, c) => acc + (Number(c.monto) - Number(c.monto_pagado || 0)), 0);
+      const caja = await cobros.cajaDelDia();
+      const proyeccion = await cobros.proyeccionIngresos(15);
+      return { total_pendiente: totalPendiente, cobrado_hoy_por_metodo: caja, proyeccion_15_dias: proyeccion };
+    }
+    case 'consultar_reporte_metodo_pago': {
+      const mes = args.mes_iso || new Date().toISOString().slice(0, 7);
+      const desde = `${mes}-01`;
+      const finMes = new Date(desde); finMes.setMonth(finMes.getMonth() + 1);
+      const porMetodo = await cobros.reportePorMetodo(desde, finMes.toISOString().slice(0, 10));
+      return { por_metodo: porMetodo };
+    }
+    case 'generar_mensaje_reclamo': {
+      const cliente = await resolverCliente(ctx, args);
+      if (!cliente) return errorClienteNoEncontrado(args.cliente_nombre);
+      if (cliente.multiple) return errorClienteAmbiguo(cliente.opciones);
+      const lista = await cobros.obtenerCobrosPorCliente(cliente.id);
+      const pendiente = lista.find((c) => c.estado === 'pendiente');
+      if (!pendiente) return { error: `${cliente.nombre} no tiene deudas pendientes.` };
+      return {
+        cliente: cliente.nombre,
+        telefono: cliente.telefono,
+        monto: Number(pendiente.monto) - Number(pendiente.monto_pagado || 0),
+        vencimiento: pendiente.fecha_vencimiento,
+      };
+    }
+    case 'exportar_cobros_mes': {
+      const mes = args.mes_iso || new Date().toISOString().slice(0, 7);
+      const desde = `${mes}-01T00:00:00.000Z`;
+      const finMes = new Date(`${mes}-01`); finMes.setMonth(finMes.getMonth() + 1);
+      const lista = await cobros.cobrosEnRango(desde, finMes.toISOString());
+      if (!lista.length) { await ctx.reply(`No hay cobros registrados en ${mes}.`); return { cantidad: 0 }; }
+      const dias = [{ etiqueta: `Cobros de ${mes}`, items: lista.map((c) => ({ hora: '', texto: `${c.clientes?.nombre}: $${c.monto} [${c.estado}]${c.metodo_pago ? ' - ' + c.metodo_pago : ''}` })) }];
+      const buffer = await pdf.generarAgendaPdf({ titulo: `Cobros - ${mes}`, dias });
+      await enviarDocumentoConReintento(ctx, { source: buffer, filename: `cobros-${mes}.pdf` });
+      return { ok: true, cantidad: lista.length };
+    }
+    case 'consultar_puntualidad_cliente': {
+      const cliente = await resolverCliente(ctx, args);
+      if (!cliente) return errorClienteNoEncontrado(args.cliente_nombre);
+      if (cliente.multiple) return errorClienteAmbiguo(cliente.opciones);
+      return { a_tiempo: cliente.pagos_a_tiempo || 0, tarde: cliente.pagos_tarde || 0 };
+    }
+
     case 'consultar_recontactar': {
       const lista = await presupuestos.presupuestosParaRecontactar(7);
       if (!lista.length) { await ctx.reply('No hay presupuestos para recontactar por ahora. 👍'); return { cantidad: 0 }; }
