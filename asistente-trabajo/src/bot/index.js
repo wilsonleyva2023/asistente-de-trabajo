@@ -195,15 +195,29 @@ function numFmt(n) {
   return String(n).padStart(4, '0');
 }
 
-async function resolverCliente(args) {
+async function resolverCliente(ctx, args) {
   if (args.cliente_id) {
-    try { return await clientes.obtenerCliente(args.cliente_id); } catch (e) {}
+    try {
+      const c = await clientes.obtenerCliente(args.cliente_id);
+      session.setClienteActivo(ctx.chat.id, c.id);
+      return c;
+    } catch (e) {}
   }
   const nombre = args.cliente_nombre;
-  if (!nombre) return null;
+  if (!nombre) {
+    // Sin nombre: usamos el cliente activo de la charla, si hay uno.
+    const activoId = session.obtenerClienteActivo(ctx.chat.id);
+    if (activoId) {
+      try { return await clientes.obtenerCliente(activoId); } catch (e) {}
+    }
+    return null;
+  }
   const encontrados = await clientes.buscarClientesPorNombre(nombre);
   if (!encontrados.length) return null;
-  if (encontrados.length === 1) return encontrados[0];
+  if (encontrados.length === 1) {
+    session.setClienteActivo(ctx.chat.id, encontrados[0].id);
+    return encontrados[0];
+  }
   const opciones = await Promise.all(encontrados.map((c) => clientes.infoParaDistinguir(c.id)));
   return { multiple: true, opciones };
 }
@@ -243,7 +257,7 @@ async function resolverClienteConPresupuesto(args) {
 
 // Resuelve un cliente y su próxima visita pendiente (para completar/reagendar/cancelar)
 async function resolverClienteConVisita(args) {
-  const cliente = await resolverCliente(args);
+  const cliente = await resolverCliente(ctx, args);
   if (!cliente) return errorClienteNoEncontrado(args.cliente_nombre);
   if (cliente.multiple) return errorClienteAmbiguo(cliente.opciones);
   const visita = await visitas.proximaVisitaPendiente(cliente.id);
@@ -293,11 +307,14 @@ async function ejecutarHerramienta(ctx, nombre, args) {
       const cliente = await clientes.crearCliente({
         nombre: args.nombre, telefono: args.telefono || null, direccion: args.direccion || null,
         notas: args.notas || null, apodo: args.apodo || null, referido_por: args.referido_por || null,
+        categoria: args.categoria || null, cumpleanos: args.cumpleanos_iso || null, horario_preferido: args.horario_preferido || null,
+        relacion: args.relacion || null, descuento_habitual: args.descuento_habitual || 0, contacto_secundario: args.contacto_secundario || null,
       });
+      session.setClienteActivo(ctx.chat.id, cliente.id);
       return { ok: true, nombre: cliente.nombre, cliente_id: cliente.id };
     }
     case 'editar_cliente': {
-      const cliente = await resolverCliente(args);
+      const cliente = await resolverCliente(ctx, args);
       if (!cliente) return errorClienteNoEncontrado(args.cliente_nombre);
       if (cliente.multiple) return errorClienteAmbiguo(cliente.opciones);
       const cambios = {};
@@ -306,12 +323,20 @@ async function ejecutarHerramienta(ctx, nombre, args) {
       if (args.nueva_direccion) cambios.direccion = args.nueva_direccion;
       if (args.nuevo_apodo) cambios.apodo = args.nuevo_apodo;
       if (args.nuevas_notas) cambios.notas = args.nuevas_notas;
+      if (args.nueva_categoria) cambios.categoria = args.nueva_categoria;
+      if (args.prioritario !== undefined) cambios.prioritario = args.prioritario;
+      if (args.bloqueado !== undefined) cambios.bloqueado = args.bloqueado;
+      if (args.cumpleanos_iso) cambios.cumpleanos = args.cumpleanos_iso;
+      if (args.nuevo_horario_preferido) cambios.horario_preferido = args.nuevo_horario_preferido;
+      if (args.nueva_relacion) cambios.relacion = args.nueva_relacion;
+      if (args.nuevo_descuento_habitual !== undefined) cambios.descuento_habitual = args.nuevo_descuento_habitual;
+      if (args.nuevo_contacto_secundario) cambios.contacto_secundario = args.nuevo_contacto_secundario;
       if (!Object.keys(cambios).length) return { error: 'No se especificó qué corregir.' };
       const actualizado = await clientes.actualizarCliente(cliente.id, cambios);
       return { ok: true, cliente_id: actualizado.id, nombre: actualizado.nombre };
     }
     case 'eliminar_cliente': {
-      const cliente = await resolverCliente(args);
+      const cliente = await resolverCliente(ctx, args);
       if (!cliente) return errorClienteNoEncontrado(args.cliente_nombre);
       if (cliente.multiple) return errorClienteAmbiguo(cliente.opciones);
       if (args.permanente) {
@@ -329,8 +354,77 @@ async function ejecutarHerramienta(ctx, nombre, args) {
     }
 
     // ---- PRESUPUESTOS ----
+    case 'buscar_clientes_por_categoria': {
+      const lista = await clientes.buscarClientesPorCategoria(args.categoria || '');
+      if (!lista.length) { await ctx.reply(`No tenés clientes en la categoría "${args.categoria}".`); return { cantidad: 0 }; }
+      let msg = `📋 Categoría "${args.categoria}":\n\n`;
+      lista.forEach((c) => { msg += `• ${c.nombre}${c.telefono ? ' - ' + c.telefono : ''}\n`; });
+      await ctx.reply(msg);
+      return { cantidad: lista.length };
+    }
+    case 'buscar_cliente_por_telefono': {
+      const lista = await clientes.buscarPorTelefono(args.telefono || '');
+      if (!lista.length) return { encontrado: false };
+      return { encontrado: true, clientes: lista.map((c) => ({ nombre: c.nombre, id: c.id })) };
+    }
+    case 'listar_clientes_recientes': {
+      const lista = await clientes.clientesRecientes(10);
+      if (!lista.length) { await ctx.reply('No tenés clientes cargados todavía.'); return { cantidad: 0 }; }
+      let msg = '👥 Clientes recientes:\n\n';
+      lista.forEach((c) => { msg += `• ${c.nombre}${c.apodo ? ' (' + c.apodo + ')' : ''}\n`; });
+      await ctx.reply(msg);
+      return { cantidad: lista.length };
+    }
+    case 'combinar_clientes': {
+      const aConservar = await clientes.buscarClientesPorNombre(args.nombre_a_conservar || '');
+      const aFusionar = await clientes.buscarClientesPorNombre(args.nombre_a_fusionar || '');
+      if (!aConservar.length || !aFusionar.length) return { error: 'No encontré alguno de los dos clientes mencionados.' };
+      if (aConservar.length > 1 || aFusionar.length > 1) return { error: 'Hay más de un cliente con alguno de esos nombres, sé más específico.' };
+      await clientes.combinarClientes(aFusionar[0].id, aConservar[0].id);
+      return { ok: true, mensaje: `Se unió todo el historial de "${aFusionar[0].nombre}" dentro de "${aConservar[0].nombre}".` };
+    }
+    case 'agregar_direccion_cliente': {
+      const cliente = await resolverCliente(ctx, args);
+      if (!cliente) return errorClienteNoEncontrado(args.cliente_nombre);
+      if (cliente.multiple) return errorClienteAmbiguo(cliente.opciones);
+      await clientes.agregarDireccion(cliente.id, args.etiqueta, args.direccion);
+      return { ok: true };
+    }
+    case 'registrar_satisfaccion': {
+      const cliente = await resolverCliente(ctx, args);
+      if (!cliente) return errorClienteNoEncontrado(args.cliente_nombre);
+      if (cliente.multiple) return errorClienteAmbiguo(cliente.opciones);
+      const ultimo = await trabajos.obtenerUltimoTrabajo(cliente.id);
+      if (!ultimo) return { error: `${cliente.nombre} no tiene trabajos registrados.` };
+      await trabajos.registrarSatisfaccion(ultimo.id, args.satisfaccion);
+      return { ok: true };
+    }
+    case 'consultar_clientes_en_silencio': {
+      const lista = await clientes.clientesEnSilencio(args.meses || 6);
+      if (!lista.length) { await ctx.reply('No hay clientes en silencio por ahora. 👍'); return { cantidad: 0 }; }
+      let msg = '🔇 Clientes sin contacto hace tiempo:\n\n';
+      lista.forEach((c) => { msg += `• ${c.nombre} (último contacto: ${c.ultimo_contacto})\n`; });
+      await ctx.reply(msg);
+      return { cantidad: lista.length };
+    }
+    case 'consultar_rechazados_para_reintentar': {
+      const lista = await presupuestos.rechazadosParaReintentar(3);
+      if (!lista.length) { await ctx.reply('No hay presupuestos rechazados para reintentar por ahora.'); return { cantidad: 0 }; }
+      let msg = '🔁 Presupuestos rechazados que podrías reintentar:\n\n';
+      lista.forEach((p) => { msg += `• ${p.clientes?.nombre} - ${p.descripcion} ($${p.monto})\n`; });
+      await ctx.reply(msg);
+      return { cantidad: lista.length };
+    }
+    case 'consultar_trabajos_repetidos': {
+      const cliente = await resolverCliente(ctx, args);
+      if (!cliente) return errorClienteNoEncontrado(args.cliente_nombre);
+      if (cliente.multiple) return errorClienteAmbiguo(cliente.opciones);
+      const lista = await trabajos.trabajosRepetidos(cliente.id, 6);
+      return { cantidad: lista.length, trabajos: lista.map((t) => t.descripcion) };
+    }
+
     case 'crear_presupuesto': {
-      const cliente = await resolverCliente(args);
+      const cliente = await resolverCliente(ctx, args);
       if (!cliente) return errorClienteNoEncontrado(args.cliente_nombre);
       if (cliente.multiple) return errorClienteAmbiguo(cliente.opciones);
       const items = args.items && args.items.length ? args.items : [];
@@ -421,7 +515,7 @@ async function ejecutarHerramienta(ctx, nombre, args) {
       return { ok: true, mensaje: 'Presupuesto borrado (se puede restaurar). La deuda asociada también se canceló.' };
     }
     case 'restaurar_presupuesto': {
-      const cliente = await resolverCliente(args);
+      const cliente = await resolverCliente(ctx, args);
       if (!cliente) return errorClienteNoEncontrado(args.cliente_nombre);
       if (cliente.multiple) return errorClienteAmbiguo(cliente.opciones);
       const archivado = await presupuestos.ultimoArchivado(cliente.id);
@@ -449,7 +543,7 @@ async function ejecutarHerramienta(ctx, nombre, args) {
 
     // ---- RECIBOS ----
     case 'crear_recibo': {
-      const cliente = await resolverCliente(args);
+      const cliente = await resolverCliente(ctx, args);
       if (!cliente) return errorClienteNoEncontrado(args.cliente_nombre);
       if (cliente.multiple) return errorClienteAmbiguo(cliente.opciones);
       let concepto = args.concepto, monto = args.monto, items = null;
@@ -484,7 +578,7 @@ async function ejecutarHerramienta(ctx, nombre, args) {
       return { cantidad: lista.length };
     }
     case 'registrar_pago_parcial': {
-      const cliente = await resolverCliente(args);
+      const cliente = await resolverCliente(ctx, args);
       if (!cliente) return errorClienteNoEncontrado(args.cliente_nombre);
       if (cliente.multiple) return errorClienteAmbiguo(cliente.opciones);
       const lista = await cobros.obtenerCobrosPorCliente(cliente.id);
@@ -495,7 +589,7 @@ async function ejecutarHerramienta(ctx, nombre, args) {
       return { ok: true, estado: actualizado.estado, restante: restante > 0 ? restante : 0, cliente_id: cliente.id };
     }
     case 'eliminar_cobro': {
-      const cliente = await resolverCliente(args);
+      const cliente = await resolverCliente(ctx, args);
       if (!cliente) return errorClienteNoEncontrado(args.cliente_nombre);
       if (cliente.multiple) return errorClienteAmbiguo(cliente.opciones);
       const lista = await cobros.obtenerCobrosPorCliente(cliente.id);
@@ -505,7 +599,7 @@ async function ejecutarHerramienta(ctx, nombre, args) {
       return { ok: true, mensaje: 'Cobro borrado (se puede restaurar).' };
     }
     case 'restaurar_cobro': {
-      const cliente = await resolverCliente(args);
+      const cliente = await resolverCliente(ctx, args);
       if (!cliente) return errorClienteNoEncontrado(args.cliente_nombre);
       if (cliente.multiple) return errorClienteAmbiguo(cliente.opciones);
       const archivado = await cobros.ultimoArchivado(cliente.id);
@@ -524,7 +618,7 @@ async function ejecutarHerramienta(ctx, nombre, args) {
 
     // ---- TRABAJOS ----
     case 'registrar_trabajo': {
-      const cliente = await resolverCliente(args);
+      const cliente = await resolverCliente(ctx, args);
       if (!cliente) return errorClienteNoEncontrado(args.cliente_nombre);
       if (cliente.multiple) return errorClienteAmbiguo(cliente.opciones);
       const activo = await presupuestos.obtenerUltimoPresupuesto(cliente.id);
@@ -535,7 +629,7 @@ async function ejecutarHerramienta(ctx, nombre, args) {
       return { ok: true, cliente_id: cliente.id, garantia_vencimiento: t.garantia_vencimiento };
     }
     case 'editar_trabajo': {
-      const cliente = await resolverCliente(args);
+      const cliente = await resolverCliente(ctx, args);
       if (!cliente) return errorClienteNoEncontrado(args.cliente_nombre);
       if (cliente.multiple) return errorClienteAmbiguo(cliente.opciones);
       const ultimo = await trabajos.obtenerUltimoTrabajo(cliente.id);
@@ -548,7 +642,7 @@ async function ejecutarHerramienta(ctx, nombre, args) {
       return { ok: true };
     }
     case 'eliminar_trabajo': {
-      const cliente = await resolverCliente(args);
+      const cliente = await resolverCliente(ctx, args);
       if (!cliente) return errorClienteNoEncontrado(args.cliente_nombre);
       if (cliente.multiple) return errorClienteAmbiguo(cliente.opciones);
       const ultimo = await trabajos.obtenerUltimoTrabajo(cliente.id);
@@ -559,7 +653,7 @@ async function ejecutarHerramienta(ctx, nombre, args) {
 
     // ---- EQUIPOS ----
     case 'registrar_equipo': {
-      const cliente = await resolverCliente(args);
+      const cliente = await resolverCliente(ctx, args);
       if (!cliente) return errorClienteNoEncontrado(args.cliente_nombre);
       if (cliente.multiple) return errorClienteAmbiguo(cliente.opciones);
       const equipo = await equipos.registrarEquipo({
@@ -569,7 +663,7 @@ async function ejecutarHerramienta(ctx, nombre, args) {
       return { ok: true, proximo_mantenimiento: equipo.proximo_mantenimiento || null, cliente_id: cliente.id };
     }
     case 'eliminar_equipo': {
-      const cliente = await resolverCliente(args);
+      const cliente = await resolverCliente(ctx, args);
       if (!cliente) return errorClienteNoEncontrado(args.cliente_nombre);
       if (cliente.multiple) return errorClienteAmbiguo(cliente.opciones);
       const lista = await equipos.equiposPorCliente(cliente.id);
@@ -581,7 +675,7 @@ async function ejecutarHerramienta(ctx, nombre, args) {
 
     // ---- AGENDA / VISITAS ----
     case 'agendar_trabajo': {
-      const cliente = await resolverCliente(args);
+      const cliente = await resolverCliente(ctx, args);
       if (!cliente) return errorClienteNoEncontrado(args.cliente_nombre);
       if (cliente.multiple) return errorClienteAmbiguo(cliente.opciones);
       const fecha = new Date(args.fecha_hora_iso);
@@ -653,7 +747,7 @@ async function ejecutarHerramienta(ctx, nombre, args) {
     }
 
     case 'contar_visitas_cliente': {
-      const cliente = await resolverCliente(args);
+      const cliente = await resolverCliente(ctx, args);
       if (!cliente) return errorClienteNoEncontrado(args.cliente_nombre);
       if (cliente.multiple) return errorClienteAmbiguo(cliente.opciones);
       const veces = await visitas.contarVisitasCliente(cliente.id);
@@ -741,7 +835,7 @@ async function ejecutarHerramienta(ctx, nombre, args) {
       return { ok: true };
     }
     case 'generar_extracto_cliente': {
-      const cliente = await resolverCliente(args);
+      const cliente = await resolverCliente(ctx, args);
       if (!cliente) return errorClienteNoEncontrado(args.cliente_nombre);
       if (cliente.multiple) return errorClienteAmbiguo(cliente.opciones);
       const presupuestosCliente = await presupuestos.historialCompleto(cliente.id);
@@ -802,10 +896,16 @@ async function pasoBuscarCliente(ctx, estado, texto) {
   for (const c of encontrados.slice(0, 5)) ctx.reply(formatearFicha(await clientes.fichaCompleta(c.id)));
 }
 
-function formatearFicha({ cliente, equipos, presupuestos, cobros, trabajos }) {
-  let msg = `📋 ${cliente.nombre}${cliente.apodo ? ` (${cliente.apodo})` : ''}\n`;
+function formatearFicha({ cliente, equipos, direcciones, presupuestos, cobros, trabajos }) {
+  let msg = `📋 ${cliente.nombre}${cliente.apodo ? ` (${cliente.apodo})` : ''}${cliente.prioritario ? ' ⭐' : ''}${cliente.bloqueado ? ' 🚫' : ''}\n`;
+  if (cliente.categoria) msg += `Categoría: ${cliente.categoria}\n`;
   if (cliente.telefono) msg += `Tel: ${cliente.telefono}\n`;
+  if (cliente.contacto_secundario) msg += `Otro contacto: ${cliente.contacto_secundario}\n`;
   if (cliente.direccion) msg += `Dirección: ${cliente.direccion}\n`;
+  if (direcciones?.length) direcciones.forEach((d) => { msg += `Dirección (${d.etiqueta || 'extra'}): ${d.direccion}\n`; });
+  if (cliente.horario_preferido) msg += `Horario preferido: ${cliente.horario_preferido}\n`;
+  if (cliente.descuento_habitual > 0) msg += `Descuento habitual: ${cliente.descuento_habitual}%\n`;
+  if (cliente.relacion) msg += `Relación: ${cliente.relacion}\n`;
   if (equipos?.length) { msg += `\n🔧 Equipos:\n`; equipos.forEach((e) => (msg += `  • ${e.tipo}\n`)); }
   if (presupuestos?.length) { msg += `\n📋 Presupuestos:\n`; presupuestos.forEach((p) => (msg += `  • ${p.descripcion} - $${p.monto || '-'} [${p.estado}]\n`)); }
   if (cobros?.length) { msg += `\n💰 Cobros:\n`; cobros.forEach((c) => (msg += `  • $${c.monto} (pagado $${c.monto_pagado || 0}) [${c.estado}]\n`)); }
