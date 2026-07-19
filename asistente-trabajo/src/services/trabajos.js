@@ -76,6 +76,21 @@ async function trabajosEnRango(desdeISO, hastaISO) {
   return data;
 }
 
+async function registrarSatisfaccion(trabajo_id, satisfaccion) {
+  const { data, error } = await supabase.from('trabajos').update({ satisfaccion }).eq('id', trabajo_id).select().single();
+  if (error) throw error;
+  return data;
+}
+
+// Detecta si un cliente tuvo varios trabajos parecidos en poco tiempo (posible problema de fondo)
+async function trabajosRepetidos(cliente_id, meses = 6) {
+  const limite = new Date();
+  limite.setMonth(limite.getMonth() - meses);
+  const { data, error } = await supabase.from('trabajos').select('*').eq('cliente_id', cliente_id).gte('fecha', limite.toISOString().slice(0, 10));
+  if (error) throw error;
+  return data;
+}
+
 module.exports = {
   registrarTrabajo,
   editarTrabajo,
@@ -84,4 +99,6 @@ module.exports = {
   trabajosPorCliente,
   garantiasPorVencer,
   trabajosEnRango,
+  registrarSatisfaccion,
+  trabajosRepetidos,
 };
