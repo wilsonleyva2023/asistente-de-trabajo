@@ -72,6 +72,22 @@ function obtenerUltimaFotoUrl(chatId) {
   return ultimaFotoUrl.get(chatId) || null;
 }
 
+const ultimoDocumentoUrl = new Map();
+function setUltimoDocumentoUrl(chatId, datos) {
+  ultimoDocumentoUrl.set(chatId, datos);
+}
+function obtenerUltimoDocumentoUrl(chatId) {
+  return ultimoDocumentoUrl.get(chatId) || null;
+}
+
+const ultimoAudio = new Map();
+function setUltimoAudio(chatId, datos) {
+  ultimoAudio.set(chatId, datos);
+}
+function obtenerUltimoAudio(chatId) {
+  return ultimoAudio.get(chatId) || null;
+}
+
 const cobroActivo = new Map();
 function setCobroActivo(chatId, cobroId) {
   cobroActivo.set(chatId, cobroId);
@@ -96,6 +112,22 @@ function obtenerEquipoActivo(chatId) {
   return equipoActivo.get(chatId) || null;
 }
 
+const notaActiva = new Map();
+function setNotaActiva(chatId, notaId) {
+  notaActiva.set(chatId, notaId);
+}
+function obtenerNotaActiva(chatId) {
+  return notaActiva.get(chatId) || null;
+}
+
+const reporteActivo = new Map();
+function setReporteActivo(chatId, tipo) {
+  reporteActivo.set(chatId, tipo);
+}
+function obtenerReporteActivo(chatId) {
+  return reporteActivo.get(chatId) || null;
+}
+
 module.exports = {
   get, set, limpiar, obtenerHistorial, podarHistorial, limpiarHistorial,
   setClienteActivo, obtenerClienteActivo,
@@ -103,7 +135,11 @@ module.exports = {
   setModoRapido, esModoRapido,
   guardarUltimaAccion, obtenerUltimaAccion,
   setUltimaFotoUrl, obtenerUltimaFotoUrl,
+  setUltimoDocumentoUrl, obtenerUltimoDocumentoUrl,
+  setUltimoAudio, obtenerUltimoAudio,
   setCobroActivo, obtenerCobroActivo,
   setVisitaActiva, obtenerVisitaActiva,
   setEquipoActivo, obtenerEquipoActivo,
+  setNotaActiva, obtenerNotaActiva,
+  setReporteActivo, obtenerReporteActivo,
 };
