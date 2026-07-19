@@ -5,6 +5,7 @@ const presupuestos = require('../services/presupuestos');
 const cobros = require('../services/cobros');
 const visitas = require('../services/visitas');
 const trabajos = require('../services/trabajos');
+const recordatorios = require('../services/recordatorios');
 
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID_PERMITIDO;
 const TZ = 'America/Argentina/Buenos_Aires';
@@ -33,6 +34,9 @@ function iniciarTareasProgramadas() {
 
   // Resumen de fin de día, a las 19:00
   cron.schedule('0 19 * * *', () => enviarResumenDelDia(CHAT_ID), { timezone: TZ });
+
+  // Reprograma solos los recordatorios recurrentes (semanales/mensuales)
+  cron.schedule('5 0 * * *', () => recordatorios.avanzarRecurrentes(), { timezone: TZ });
 
   console.log('Tareas programadas iniciadas.');
 }
