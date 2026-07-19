@@ -542,15 +542,49 @@ async function ejecutarHerramienta(ctx, nombre, args) {
       const url = session.obtenerUltimaFotoUrl(ctx.chat.id);
       if (!url) return { error: 'No tengo ninguna foto reciente para guardar. Mandala primero.' };
       const activo = await presupuestos.obtenerUltimoPresupuesto(cliente.id);
-      await fotos.guardarFoto({ cliente_id: cliente.id, presupuesto_id: activo?.id || null, url, descripcion: args.descripcion || null, etiqueta: args.etiqueta || null });
+      const candidatos = await trabajos.buscarTrabajoDeCliente(cliente.id, args.trabajo_texto);
+      const trabajo = candidatos[0] || null;
+      await fotos.guardarFoto({
+        cliente_id: cliente.id, presupuesto_id: activo?.id || null, trabajo_id: trabajo?.id || null,
+        url, descripcion: args.descripcion || null, etiqueta: args.etiqueta || null,
+      });
+      return { ok: true, trabajo_ligado: trabajo?.descripcion || null };
+    }
+    case 'eliminar_foto': {
+      const cliente = await resolverCliente(ctx, args);
+      if (!cliente) return errorClienteNoEncontrado(args.cliente_nombre);
+      if (cliente.multiple) return errorClienteAmbiguo(cliente.opciones);
+      const lista = await fotos.fotosDeCliente(cliente.id);
+      const busqueda = (args.busqueda || '').toLowerCase();
+      const encontrada = lista.find((f) => (f.descripcion || '').toLowerCase().includes(busqueda) || (f.etiqueta || '').toLowerCase().includes(busqueda));
+      if (!encontrada) return { error: `No encontré ninguna foto de ${cliente.nombre} que coincida con "${args.busqueda}".` };
+      await fotos.eliminarFoto(encontrada.id);
+      return { ok: true };
+    }
+    case 'eliminar_documento': {
+      const cliente = await resolverCliente(ctx, args);
+      if (!cliente) return errorClienteNoEncontrado(args.cliente_nombre);
+      if (cliente.multiple) return errorClienteAmbiguo(cliente.opciones);
+      const lista = await documentos.documentosDeCliente(cliente.id);
+      const busqueda = (args.busqueda || '').toLowerCase();
+      const encontrado = lista.find((d) => (d.nombre_archivo || '').toLowerCase().includes(busqueda) || (d.resumen || '').toLowerCase().includes(busqueda));
+      if (!encontrado) return { error: `No encontré ningún documento de ${cliente.nombre} que coincida con "${args.busqueda}".` };
+      await documentos.eliminarDocumento(encontrado.id);
       return { ok: true };
     }
     case 'ver_fotos_cliente': {
       const cliente = await resolverCliente(ctx, args);
       if (!cliente) return errorClienteNoEncontrado(args.cliente_nombre);
       if (cliente.multiple) return errorClienteAmbiguo(cliente.opciones);
-      const lista = await fotos.fotosDeCliente(cliente.id);
-      if (!lista.length) { await ctx.reply(`${cliente.nombre} no tiene fotos guardadas.`); return { cantidad: 0 }; }
+      let trabajoId = null;
+      if (args.trabajo_texto) {
+        const candidatos = await trabajos.buscarTrabajoDeCliente(cliente.id, args.trabajo_texto);
+        if (!candidatos.length) return { error: `${cliente.nombre} no tiene ningún trabajo que coincida con "${args.trabajo_texto}".` };
+        if (candidatos.length > 1) return { error: 'Hay más de un trabajo que coincide, preguntale al usuario cuál (con fecha) antes de mostrar fotos.', opciones: candidatos.map((t) => ({ descripcion: t.descripcion, fecha: t.fecha })) };
+        trabajoId = candidatos[0].id;
+      }
+      const lista = await fotos.fotosDeCliente(cliente.id, { trabajo_id: trabajoId, etiqueta: args.etiqueta });
+      if (!lista.length) { await ctx.reply(`${cliente.nombre} no tiene fotos guardadas con ese filtro.`); return { cantidad: 0 }; }
       for (const f of lista.slice(0, 6)) {
         await ctx.replyWithPhoto(f.url, { caption: f.etiqueta ? `${f.etiqueta}${f.descripcion ? ' - ' + f.descripcion : ''}` : f.descripcion || undefined });
       }
