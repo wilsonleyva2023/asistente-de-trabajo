@@ -6,6 +6,7 @@ const cobros = require('../services/cobros');
 const visitas = require('../services/visitas');
 const trabajos = require('../services/trabajos');
 const recordatorios = require('../services/recordatorios');
+const clientes = require('../services/clientes');
 
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID_PERMITIDO;
 const TZ = 'America/Argentina/Buenos_Aires';
@@ -50,7 +51,27 @@ async function enviarResumenSemanal(chatId) {
   if (cobrosPend.length) {
     const total = cobrosPend.reduce((acc, c) => acc + (Number(c.monto) - Number(c.monto_pagado || 0)), 0);
     msg += `Total pendiente de cobro: $${total}\n`;
+
+    // Alerta de dependencia: si 2 clientes concentran más del 50% de lo pendiente
+    const porCliente = {};
+    cobrosPend.forEach((c) => {
+      const nombre = c.clientes?.nombre || 'Cliente';
+      porCliente[nombre] = (porCliente[nombre] || 0) + Number(c.monto);
+    });
+    const ordenado = Object.entries(porCliente).sort((a, b) => b[1] - a[1]);
+    if (ordenado.length >= 2) {
+      const topDos = ordenado.slice(0, 2).reduce((acc, [, v]) => acc + v, 0);
+      const porcentaje = Math.round((topDos / total) * 100);
+      if (porcentaje >= 50) msg += `⚠️ ${porcentaje}% de lo pendiente depende de solo 2 clientes (${ordenado[0][0]}, ${ordenado[1][0]}).\n`;
+    }
   }
+
+  const enSilencio = await clientes.clientesEnSilencio(6);
+  if (enSilencio.length) msg += `\n🔇 Clientes sin contacto hace 6+ meses: ${enSilencio.length}\n`;
+
+  const rechazados = await presupuestos.rechazadosParaReintentar(3);
+  if (rechazados.length) msg += `🔁 Presupuestos rechazados que podrías reintentar: ${rechazados.length}\n`;
+
   await bot.telegram.sendMessage(chatId, msg);
 }
 
