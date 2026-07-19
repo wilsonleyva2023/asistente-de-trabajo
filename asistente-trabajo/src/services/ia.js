@@ -51,6 +51,10 @@ BORRAR: temporal (archiva, recuperable) por defecto; permanente=true solo si lo 
 
 NOTAS: guardalas directo con lo dado, sin pedir título/categoría — categoría sola si es evidente (ej: "comprar"→compras). Reconocé que algo es nota aunque no digan "anotá", si el contexto lo sugiere (lista, dato suelto). Si se habla de una visita/cliente puntual, ligala sola. listar/buscar no muestran completadas salvo incluir_completadas=true. Confirmación cortita.
 
+CATÁLOGO DE SERVICIOS: mano de obra es un valor fijo; materiales es un rango estimado (aclaralo así en los PDF, nunca como precio cerrado). Al presupuestar algo que coincide con el catálogo, buscalo primero y usalo como base de los ítems del presupuesto, sumando 1 al uso con incrementar en la misma acción.
+
+HERRAMIENTAS PROPIAS: si al agendar o hablar de una visita el usuario menciona qué lleva, usá registrar_llevadas_visita. Al completar esa visita, preguntá si recuperó todo lo que llevó (salvo que ya lo haya dicho); si falta algo, queda pendiente en ese cliente hasta que confirme. "Llevo lo de siempre" → usá el kit habitual completo.
+
 REPORTES: preguntas casuales ("cómo ando", "cómo va el negocio") = pedido de reporte; si es amplio, usá consultar_negocio_completo. Texto corto por defecto (3-5 líneas), PDF solo si lo piden. Comparaciones con palabra clara (mejor/peor/similar) además del %. Alertas urgentes antes que números fríos. Períodos naturales ("mes pasado", "este año") calculados por vos.
 
 FOTOS/AUDIO/DOCUMENTOS: sin instrucción clara, decidí según contexto reciente (no preguntes salvo ambigüedad real). Ticket/comprobante → leé el monto vos y usá registrar_gasto_desde_ticket. Chapita de equipo con marca/modelo/serie → leelo vos y usá editar_equipo. Documento largo → resumen de 2-3 líneas. Confirmación cortita al guardar.
@@ -828,6 +832,105 @@ const HERRAMIENTAS = [
       {
         name: 'eliminar_notas_completadas',
         description: 'Borra todas las notas ya marcadas como completadas de una vez. SOLO tras confirmación.',
+        parameters: { type: 'OBJECT', properties: {} },
+      },
+
+      // ---- CATÁLOGO DE SERVICIOS ----
+      {
+        name: 'guardar_servicio_catalogo',
+        description: 'Guarda un servicio en el catálogo con precio de mano de obra fijo y un rango estimado de materiales.',
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            nombre: { type: 'STRING' },
+            categoria: { type: 'STRING' },
+            mano_obra: { type: 'NUMBER' },
+            materiales_min: { type: 'NUMBER' },
+            materiales_max: { type: 'NUMBER' },
+            garantia_dias: { type: 'NUMBER' },
+            duracion_minutos: { type: 'NUMBER' },
+            materiales_tipicos: { type: 'STRING', description: 'Qué materiales suele necesitar este trabajo.' },
+          },
+          required: ['nombre', 'mano_obra'],
+        },
+      },
+      {
+        name: 'editar_servicio_catalogo',
+        description: 'Corrige el precio u otros datos de un servicio del catálogo.',
+        parameters: {
+          type: 'OBJECT',
+          properties: { nombre: { type: 'STRING' }, nueva_mano_obra: { type: 'NUMBER' }, nuevos_materiales_min: { type: 'NUMBER' }, nuevos_materiales_max: { type: 'NUMBER' } },
+          required: ['nombre'],
+        },
+      },
+      {
+        name: 'eliminar_servicio_catalogo',
+        description: 'Borra un servicio del catálogo. SOLO tras confirmación.',
+        parameters: { type: 'OBJECT', properties: { nombre: { type: 'STRING' } }, required: ['nombre'] },
+      },
+      {
+        name: 'buscar_servicio_catalogo',
+        description: 'Busca un servicio del catálogo por nombre, para usarlo como base de un presupuesto o consultarlo.',
+        parameters: { type: 'OBJECT', properties: { nombre: { type: 'STRING' } }, required: ['nombre'] },
+      },
+      {
+        name: 'listar_catalogo',
+        description: 'Lista todo el catálogo, opcionalmente filtrado por categoría.',
+        parameters: { type: 'OBJECT', properties: { categoria: { type: 'STRING' } } },
+      },
+      {
+        name: 'actualizar_precios_catalogo',
+        description: 'Actualiza el precio de mano de obra de todo el catálogo en un porcentaje (ej: subir 10%).',
+        parameters: { type: 'OBJECT', properties: { porcentaje: { type: 'NUMBER' } }, required: ['porcentaje'] },
+      },
+      {
+        name: 'consultar_servicio_mas_usado',
+        description: 'Muestra qué servicios del catálogo se usaron más veces.',
+        parameters: { type: 'OBJECT', properties: {} },
+      },
+      {
+        name: 'exportar_catalogo_pdf',
+        description: 'Genera un PDF con todo el catálogo de servicios y precios, para mostrarle al cliente.',
+        parameters: { type: 'OBJECT', properties: {} },
+      },
+
+      // ---- HERRAMIENTAS PROPIAS ----
+      {
+        name: 'registrar_llevadas_visita',
+        description: 'Anota qué herramientas se llevan a la próxima/última visita de un cliente. Si son de uso habitual, quedan guardadas en el kit para la próxima vez.',
+        parameters: {
+          type: 'OBJECT',
+          properties: { cliente_id: CID, cliente_nombre: CNOM, items: { type: 'ARRAY', items: { type: 'STRING' } } },
+          required: ['cliente_nombre', 'items'],
+        },
+      },
+      {
+        name: 'confirmar_recuperacion_herramientas',
+        description: 'Marca que se recuperaron todas (o una puntual) las herramientas llevadas a la visita de un cliente.',
+        parameters: {
+          type: 'OBJECT',
+          properties: { cliente_id: CID, cliente_nombre: CNOM, item_puntual: { type: 'STRING', description: 'Si solo confirma una herramienta puntual, no todas.' } },
+          required: ['cliente_nombre'],
+        },
+      },
+      {
+        name: 'consultar_pendientes_recuperar',
+        description: 'Lista herramientas que quedaron sin recuperar en casas de clientes.',
+        parameters: { type: 'OBJECT', properties: {} },
+      },
+      {
+        name: 'consultar_kit_habitual',
+        description: 'Muestra tu lista de herramientas habituales (kit base).',
+        parameters: { type: 'OBJECT', properties: {} },
+      },
+      {
+        name: 'marcar_estado_herramienta',
+        description: "Marca una herramienta como rota o necesita mantenimiento, con notas opcionales.",
+        parameters: { type: 'OBJECT', properties: { nombre: { type: 'STRING' }, estado: { type: 'STRING', description: "'buena', 'rota', 'necesita mantenimiento'." }, notas: { type: 'STRING' } }, required: ['nombre', 'estado'] },
+      },
+      {
+        name: 'consultar_historial_olvidos',
+        description: 'Muestra qué herramientas se te suelen olvidar más seguido, para detectar el patrón.',
         parameters: { type: 'OBJECT', properties: {} },
       },
 
