@@ -100,6 +100,15 @@ async function rentabilidad(trabajo_id) {
   return { cobrado, gasto, ganancia_neta: cobrado - gasto };
 }
 
+// Busca entre los trabajos de un cliente el que mejor coincida con un texto (ej: "termotanque", "inodoro")
+async function buscarTrabajoDeCliente(cliente_id, texto) {
+  const { data, error } = await supabase.from('trabajos').select('*').eq('cliente_id', cliente_id).order('fecha', { ascending: false });
+  if (error) throw error;
+  if (!texto) return data || [];
+  const t = texto.toLowerCase();
+  return (data || []).filter((tr) => tr.descripcion.toLowerCase().includes(t));
+}
+
 module.exports = {
   registrarTrabajo,
   editarTrabajo,
@@ -111,4 +120,5 @@ module.exports = {
   registrarSatisfaccion,
   trabajosRepetidos,
   rentabilidad,
+  buscarTrabajoDeCliente,
 };
