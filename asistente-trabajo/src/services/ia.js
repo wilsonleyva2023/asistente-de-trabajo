@@ -36,7 +36,12 @@ AGENDA Y VISITAS (agendar_trabajo, no crear_recordatorio, cuando sea una visita 
 - Cuando el usuario diga que terminó un trabajo agendado, usá completar_visita — y ofrecele registrar el trabajo realizado y/o generar el recibo en el mismo intercambio.
 - Cuando diga que tiene que volver otro día, usá reagendar_visita con la nueva fecha.
 - consultar_agenda acepta un rango: "hoy", "manana", o "semana". Si no aclara, asumí "hoy".
-- consultar_agenda y consultar_recordatorios te devuelven los datos en crudo (no los mandan al chat ellos solos) — con esos datos armá VOS la respuesta final, organizada por día, clara y fácil de leer, mencionando el presupuesto de cada visita si lo tiene. Si el usuario no aclaró el rango, o pide "mi agenda" en general, usá "semana" por defecto (no "hoy"), y llamá tanto a consultar_agenda como a consultar_recordatorios para no dejar nada afuera.
+- Si el usuario pregunta por un día puntual que no es "hoy" ni "mañana" (ej: "el jueves", "el 25 de julio", "el lunes que viene"), calculá vos la fecha real usando la fecha de hoy como referencia, y pasala como fecha_iso en formato YYYY-MM-DD a consultar_agenda o consultar_recordatorios.
+- consultar_agenda y consultar_recordatorios te devuelven los datos en crudo (no los mandan al chat ellos solos) — con esos datos armá VOS la respuesta final, organizada por día, clara y fácil de leer, mencionando el presupuesto de cada visita si lo tiene, y la dirección si dos visitas del mismo día quedan en zonas muy distintas (avisale al usuario para que lo tenga en cuenta, sin calcular distancia exacta). Si el usuario no aclaró el rango, o pide "mi agenda" en general, usá "semana" por defecto (no "hoy"), y llamá tanto a consultar_agenda como a consultar_recordatorios para no dejar nada afuera.
+- Al usar agendar_trabajo, si el resultado indica que ese día ya tiene varias visitas (4 o más), avisale al usuario que el día está cargado.
+- Usá consultar_dias_libres si el usuario pregunta qué día tiene libre para ofrecerle a un cliente nuevo.
+- Usá contar_visitas_cliente si preguntan si un cliente es frecuente o cuántas veces lo visitaron.
+- Usá consultar_reagendados_frecuentes si preguntan por clientes problemáticos con la agenda.
 - Antes de agendar, si hay otra visita muy cerca en el horario, el sistema te va a avisar del choque — contáselo al usuario y preguntale si sigue igual o cambia el horario.
 
 RECORDATORIOS: para avisos generales que NO son una visita a un cliente (ej: "recordame pagar el monotributo", "ir al doctor"). Se pueden editar y eliminar buscando por el texto, y consultar por rango con consultar_recordatorios.
@@ -328,20 +333,44 @@ const HERRAMIENTAS = [
       },
       {
         name: 'consultar_agenda',
-        description: "Muestra la agenda de visitas. rango puede ser 'hoy', 'manana' o 'semana'.",
+        description: "Muestra la agenda de visitas. Usá rango ('hoy', 'manana', 'semana', 'mes') para períodos relativos, o fecha_iso ('YYYY-MM-DD') para un día puntual calculando la fecha real vos mismo.",
+        parameters: { type: 'OBJECT', properties: { rango: { type: 'STRING' }, fecha_iso: { type: 'STRING' } } },
+      },
+      {
+        name: 'consultar_dias_libres',
+        description: 'Muestra qué días de la semana (o rango pedido) no tienen ninguna visita agendada.',
+        parameters: { type: 'OBJECT', properties: { rango: { type: 'STRING' } } },
+      },
+      {
+        name: 'consultar_reagendados_frecuentes',
+        description: 'Muestra clientes que reagendaron su visita 2 o más veces (para detectar patrones).',
+        parameters: { type: 'OBJECT', properties: {} },
+      },
+      {
+        name: 'contar_visitas_cliente',
+        description: 'Dice cuántas veces se visitó a un cliente en el último año (para saber si es frecuente).',
+        parameters: { type: 'OBJECT', properties: { cliente_id: CID, cliente_nombre: CNOM }, required: ['cliente_nombre'] },
+      },
+      {
+        name: 'generar_agenda_pdf',
+        description: "Genera un PDF con la agenda de un rango ('semana' por defecto).",
         parameters: { type: 'OBJECT', properties: { rango: { type: 'STRING' } } },
       },
 
       // ---- RECORDATORIOS ----
       {
         name: 'crear_recordatorio',
-        description: 'Crea un recordatorio general (no una visita a cliente) con fecha y hora.',
-        parameters: { type: 'OBJECT', properties: { texto: { type: 'STRING' }, fecha_hora_iso: { type: 'STRING' } }, required: ['texto', 'fecha_hora_iso'] },
+        description: 'Crea un recordatorio general (no una visita a cliente) con fecha y hora. Puede repetirse solo cada semana o cada mes si el usuario lo pide.',
+        parameters: {
+          type: 'OBJECT',
+          properties: { texto: { type: 'STRING' }, fecha_hora_iso: { type: 'STRING' }, recurrencia: { type: 'STRING', description: "'semanal', 'mensual', o vacío si no se repite." } },
+          required: ['texto', 'fecha_hora_iso'],
+        },
       },
       {
         name: 'consultar_recordatorios',
-        description: "Muestra los recordatorios generales (no visitas a clientes) en un rango. rango puede ser 'hoy', 'manana' o 'semana'.",
-        parameters: { type: 'OBJECT', properties: { rango: { type: 'STRING' } } },
+        description: "Muestra los recordatorios generales (no visitas a clientes). Usá rango ('hoy', 'manana', 'semana') o fecha_iso ('YYYY-MM-DD') para un día puntual.",
+        parameters: { type: 'OBJECT', properties: { rango: { type: 'STRING' }, fecha_iso: { type: 'STRING' } } },
       },
       {
         name: 'editar_recordatorio',
