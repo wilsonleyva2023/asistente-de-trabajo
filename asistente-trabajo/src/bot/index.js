@@ -92,6 +92,13 @@ bot.command('cobrado', (ctx) => ejecutarHerramienta(ctx, 'consultar_estado_caja'
   return ctx.reply(`💰 Cobrado hoy: ${partes}`);
 }));
 bot.command('pendiente', (ctx) => ejecutarHerramienta(ctx, 'consultar_pendientes', {}));
+bot.command('equipos', async (ctx) => {
+  const lista = await equipos.mantenimientosVencidosSinHacer(0);
+  if (!lista.length) return ctx.reply('No tenés mantenimientos próximos a vencer. 👍');
+  let msg = '🔧 Mantenimientos próximos/vencidos:\n\n';
+  lista.forEach((e) => { msg += `• ${e.tipo} de ${e.clientes?.nombre} (${e.proximo_mantenimiento})\n`; });
+  await ctx.reply(msg);
+});
 
 // ================= ROUTER PRINCIPAL =================
 
@@ -266,12 +273,13 @@ async function resolverClienteConPresupuesto(args) {
 }
 
 // Resuelve un cliente y su próxima visita pendiente (para completar/reagendar/cancelar)
-async function resolverClienteConVisita(args) {
+async function resolverClienteConVisita(ctx, args) {
   const cliente = await resolverCliente(ctx, args);
   if (!cliente) return errorClienteNoEncontrado(args.cliente_nombre);
   if (cliente.multiple) return errorClienteAmbiguo(cliente.opciones);
   const visita = await visitas.proximaVisitaPendiente(cliente.id);
   if (!visita) return { error: `${cliente.nombre} no tiene ninguna visita agendada pendiente.` };
+  session.setVisitaActiva(ctx.chat.id, visita.id);
   return { cliente, visita };
 }
 
@@ -888,11 +896,110 @@ async function ejecutarHerramienta(ctx, nombre, args) {
       const cliente = await resolverCliente(ctx, args);
       if (!cliente) return errorClienteNoEncontrado(args.cliente_nombre);
       if (cliente.multiple) return errorClienteAmbiguo(cliente.opciones);
+      const existentes = await equipos.equiposPorCliente(cliente.id);
+      const posibleDuplicado = existentes.find((e) => e.tipo.toLowerCase() === (args.tipo || '').toLowerCase());
+      const activo = await presupuestos.obtenerUltimoPresupuesto(cliente.id);
       const equipo = await equipos.registrarEquipo({
         cliente_id: cliente.id, tipo: args.tipo, fecha_instalacion: new Date().toISOString().slice(0, 10),
         meses_para_mantenimiento: args.meses_mantenimiento || null, aviso_automatico: !!args.aviso_automatico,
+        marca: args.marca, modelo: args.modelo, numero_serie: args.numero_serie,
+        garantia_fabrica_meses: args.garantia_fabrica_meses, vida_util_anios: args.vida_util_anios,
+        presupuesto_id: activo?.id || null,
       });
-      return { ok: true, proximo_mantenimiento: equipo.proximo_mantenimiento || null, cliente_id: cliente.id };
+      session.setEquipoActivo(ctx.chat.id, equipo.id);
+      return {
+        ok: true,
+        proximo_mantenimiento: equipo.proximo_mantenimiento || null,
+        cliente_id: cliente.id,
+        posible_duplicado: posibleDuplicado ? `Ya había un ${posibleDuplicado.tipo} cargado para este cliente. Confirmá con el usuario si esto reemplaza al anterior o es uno nuevo de verdad.` : null,
+      };
+    }
+    case 'editar_equipo': {
+      const cliente = await resolverCliente(ctx, args);
+      if (!cliente) return errorClienteNoEncontrado(args.cliente_nombre);
+      if (cliente.multiple) return errorClienteAmbiguo(cliente.opciones);
+      const equipoIdActivo = session.obtenerEquipoActivo(ctx.chat.id);
+      const equipo = equipoIdActivo ? { id: equipoIdActivo } : await equipos.buscarEquipoDeCliente(cliente.id, args.equipo_texto);
+      if (!equipo) return { error: `${cliente.nombre} no tiene equipos cargados.` };
+      const cambios = {};
+      if (args.nuevo_tipo) cambios.tipo = args.nuevo_tipo;
+      if (args.nueva_marca) cambios.marca = args.nueva_marca;
+      if (args.nuevo_modelo) cambios.modelo = args.nuevo_modelo;
+      if (args.nuevo_numero_serie) cambios.numero_serie = args.nuevo_numero_serie;
+      if (args.nuevos_repuestos_necesarios) cambios.repuestos_necesarios = args.nuevos_repuestos_necesarios;
+      if (!Object.keys(cambios).length) return { error: 'No se especificó qué corregir.' };
+      const actualizado = await equipos.editarEquipo(equipo.id, cambios);
+      session.setEquipoActivo(ctx.chat.id, actualizado.id);
+      return { ok: true };
+    }
+    case 'consultar_equipos_cliente': {
+      const cliente = await resolverCliente(ctx, args);
+      if (!cliente) return errorClienteNoEncontrado(args.cliente_nombre);
+      if (cliente.multiple) return errorClienteAmbiguo(cliente.opciones);
+      const lista = await equipos.equiposPorCliente(cliente.id);
+      return { equipos: lista.map((e) => ({ tipo: e.tipo, marca: e.marca, proximo_mantenimiento: e.proximo_mantenimiento })) };
+    }
+    case 'consultar_historial_mantenimientos': {
+      const cliente = await resolverCliente(ctx, args);
+      if (!cliente) return errorClienteNoEncontrado(args.cliente_nombre);
+      if (cliente.multiple) return errorClienteAmbiguo(cliente.opciones);
+      const equipo = await equipos.buscarEquipoDeCliente(cliente.id, args.equipo_texto);
+      if (!equipo) return { error: `${cliente.nombre} no tiene ese equipo cargado.` };
+      const historial = await equipos.historialMantenimientos(equipo.id);
+      return { mantenimientos: historial.map((m) => ({ fecha: m.fecha, gasto: m.gasto_repuestos, descripcion: m.descripcion })) };
+    }
+    case 'consultar_mantenimientos_vencidos': {
+      const lista = await equipos.mantenimientosVencidosSinHacer(7);
+      if (!lista.length) { await ctx.reply('No tenés mantenimientos vencidos sin hacer. 👍'); return { cantidad: 0 }; }
+      let msg = '⚠️ Mantenimientos vencidos sin hacer:\n\n';
+      lista.forEach((e) => { msg += `• ${e.tipo} de ${e.clientes?.nombre} (vencía ${e.proximo_mantenimiento})\n`; });
+      await ctx.reply(msg);
+      return { cantidad: lista.length };
+    }
+    case 'consultar_estadistica_equipos': {
+      const conteo = await equipos.estadisticaPorTipo();
+      return { por_tipo: conteo };
+    }
+    case 'consultar_equipos_para_reemplazo': {
+      const lista = await equipos.equiposParaReemplazo();
+      if (!lista.length) { await ctx.reply('No hay equipos cerca del fin de su vida útil.'); return { cantidad: 0 }; }
+      let msg = '🔧 Equipos que se acercan al fin de su vida útil:\n\n';
+      lista.forEach((e) => { msg += `• ${e.tipo} de ${e.clientes?.nombre} (instalado ${e.fecha_instalacion})\n`; });
+      await ctx.reply(msg);
+      return { cantidad: lista.length };
+    }
+    case 'generar_ficha_equipo': {
+      const cliente = await resolverCliente(ctx, args);
+      if (!cliente) return errorClienteNoEncontrado(args.cliente_nombre);
+      if (cliente.multiple) return errorClienteAmbiguo(cliente.opciones);
+      const equipo = await equipos.buscarEquipoDeCliente(cliente.id, args.equipo_texto);
+      if (!equipo) return { error: `${cliente.nombre} no tiene ese equipo cargado.` };
+      const buffer = await pdf.generarFichaEquipo({ cliente, equipo });
+      await enviarDocumentoConReintento(ctx, { source: buffer, filename: `ficha-${equipo.tipo}-${cliente.nombre}.pdf` });
+      return { ok: true };
+    }
+    case 'registrar_mantenimiento_realizado': {
+      const cliente = await resolverCliente(ctx, args);
+      if (!cliente) return errorClienteNoEncontrado(args.cliente_nombre);
+      if (cliente.multiple) return errorClienteAmbiguo(cliente.opciones);
+      const equipo = await equipos.buscarEquipoDeCliente(cliente.id, args.equipo_texto);
+      if (!equipo) return { error: `${cliente.nombre} no tiene ese equipo cargado.` };
+      await equipos.registrarMantenimientoRealizado(equipo.id, args.gasto_repuestos, args.descripcion);
+      return { ok: true };
+    }
+    case 'anotar_repuestos_necesarios': {
+      const cliente = await resolverCliente(ctx, args);
+      if (!cliente) return errorClienteNoEncontrado(args.cliente_nombre);
+      if (cliente.multiple) return errorClienteAmbiguo(cliente.opciones);
+      const equipo = await equipos.buscarEquipoDeCliente(cliente.id, args.equipo_texto);
+      if (!equipo) return { error: `${cliente.nombre} no tiene ese equipo cargado.` };
+      await equipos.editarEquipo(equipo.id, { repuestos_necesarios: args.repuestos });
+      return { ok: true };
+    }
+    case 'consultar_mantenimientos_agrupables': {
+      const lista = await equipos.clientesConMantenimientosAgrupables(15);
+      if (!lista.length) return { cantidad: 0 };
+      return { clientes: lista.map((c) => ({ nombre: c.nombre, equipos: c.equipos })) };
     }
     case 'eliminar_equipo': {
       const cliente = await resolverCliente(ctx, args);
@@ -913,36 +1020,60 @@ async function ejecutarHerramienta(ctx, nombre, args) {
       const fecha = new Date(args.fecha_hora_iso);
       if (isNaN(fecha.getTime())) return { error: 'La fecha/hora no es válida.' };
       if (fecha < new Date()) return { error: 'Esa fecha ya pasó. Confirmale al usuario la fecha correcta antes de agendar.' };
+
+      const bloqueados = await visitas.horariosBloqueados();
+      const choqueBloqueado = visitas.chocaConBloqueado(args.fecha_hora_iso, bloqueados);
       const cercanas = await visitas.visitasCercanas(args.fecha_hora_iso, 60);
-      const visita = await visitas.crearVisita({ cliente_id: cliente.id, descripcion: args.descripcion, fecha_hora: args.fecha_hora_iso, aviso_horas_antes: args.aviso_horas_antes || 2 });
+      const visita = await visitas.crearVisita({
+        cliente_id: cliente.id, descripcion: args.descripcion, fecha_hora: args.fecha_hora_iso, aviso_horas_antes: args.aviso_horas_antes || 2,
+        que_llevar: args.que_llevar, duracion_minutos: args.duracion_minutos, recurrencia_meses: args.recurrencia_meses,
+      });
+      session.setVisitaActiva(ctx.chat.id, visita.id);
       const totalDelDia = await visitas.contarVisitasDelDia(args.fecha_hora_iso);
+
+      const cobrosCliente = await cobros.obtenerCobrosPorCliente(cliente.id);
+      const deudaPendiente = cobrosCliente.find((c) => c.estado === 'pendiente');
+      const equiposCliente = await equipos.equiposPorCliente(cliente.id);
+      const hoy = new Date().toISOString().slice(0, 10);
+      const enUnMes = new Date(); enUnMes.setMonth(enUnMes.getMonth() + 1);
+      const mantenimientoProximo = equiposCliente.find((e) => e.proximo_mantenimiento && e.proximo_mantenimiento <= enUnMes.toISOString().slice(0, 10));
+
       return {
         ok: true,
         cliente_id: cliente.id,
         choque_de_horario: cercanas.length > 0 ? cercanas.map((v) => `${v.clientes?.nombre} a las ${new Date(v.fecha_hora).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}`) : null,
+        choque_horario_bloqueado: choqueBloqueado ? choqueBloqueado.descripcion || 'horario bloqueado' : null,
         visitas_ese_dia: totalDelDia,
         dia_cargado: totalDelDia >= 4,
+        deuda_pendiente: deudaPendiente ? Number(deudaPendiente.monto) - Number(deudaPendiente.monto_pagado || 0) : null,
+        mantenimiento_proximo: mantenimientoProximo ? { equipo: mantenimientoProximo.tipo, fecha: mantenimientoProximo.proximo_mantenimiento } : null,
       };
     }
     case 'completar_visita': {
-      const r = await resolverClienteConVisita(args);
+      const r = await resolverClienteConVisita(ctx, args);
       if (r.error) return r;
       await visitas.completarVisita(r.visita.id);
-      return { ok: true, mensaje: `Visita de ${r.cliente.nombre} marcada como terminada. Podés ofrecer registrar el trabajo y/o el recibo.`, cliente_id: r.cliente.id };
+      return { ok: true, mensaje: `Visita de ${r.cliente.nombre} marcada como terminada. Podés ofrecer registrar el trabajo, cobrar y preguntar si quedó conforme.`, cliente_id: r.cliente.id };
+    }
+    case 'confirmar_visita': {
+      const r = await resolverClienteConVisita(ctx, args);
+      if (r.error) return r;
+      await visitas.confirmarVisita(r.visita.id);
+      return { ok: true };
     }
     case 'reagendar_visita': {
-      const r = await resolverClienteConVisita(args);
+      const r = await resolverClienteConVisita(ctx, args);
       if (r.error) return r;
       const nueva = new Date(args.nueva_fecha_hora_iso);
       if (isNaN(nueva.getTime())) return { error: 'La fecha/hora no es válida.' };
       await visitas.reagendarVisita(r.visita.id, args.nueva_fecha_hora_iso);
-      return { ok: true, mensaje: `Visita de ${r.cliente.nombre} reagendada.` };
+      return { ok: true, mensaje: `Visita de ${r.cliente.nombre} reagendada.`, telefono: r.cliente.telefono };
     }
     case 'cancelar_visita': {
-      const r = await resolverClienteConVisita(args);
+      const r = await resolverClienteConVisita(ctx, args);
       if (r.error) return r;
-      await visitas.cancelarVisita(r.visita.id);
-      return { ok: true };
+      await visitas.cancelarVisita(r.visita.id, args.motivo);
+      return { ok: true, telefono: r.cliente.telefono };
     }
     case 'consultar_agenda': {
       const rango = args.rango || 'semana';
@@ -1000,6 +1131,47 @@ async function ejecutarHerramienta(ctx, nombre, args) {
       const buffer = await pdf.generarAgendaPdf({ titulo: `Agenda - ${rango}`, dias });
       await enviarDocumentoConReintento(ctx, { source: buffer, filename: `agenda-${rango}.pdf` });
       return { ok: true };
+    }
+
+    case 'exportar_agenda_calendario': {
+      const rango = args.rango || 'semana';
+      const { desde, hasta } = rangoFechas(rango);
+      const lista = await visitas.visitasEnRango(desde, hasta);
+      if (!lista.length) { await ctx.reply('No hay visitas agendadas en ese rango.'); return { cantidad: 0 }; }
+      const buffer = pdf.generarICS(lista);
+      await enviarDocumentoConReintento(ctx, { source: buffer, filename: `agenda.ics` });
+      return { ok: true, cantidad: lista.length, mensaje: 'Abrí el archivo .ics con tu celular para agregarlo a Google Calendar u otro calendario.' };
+    }
+
+    case 'consultar_historial_visitas': {
+      const cliente = await resolverCliente(ctx, args);
+      if (!cliente) return errorClienteNoEncontrado(args.cliente_nombre);
+      if (cliente.multiple) return errorClienteAmbiguo(cliente.opciones);
+      const lista = await visitas.historialVisitasCliente(cliente.id);
+      return { visitas: lista.map((v) => ({ fecha: v.fecha_hora, descripcion: v.descripcion })) };
+    }
+
+    case 'bloquear_horario': {
+      await visitas.crearHorarioBloqueado(args.hora_inicio, args.hora_fin, args.descripcion);
+      return { ok: true };
+    }
+
+    case 'consultar_horas_trabajadas': {
+      const rango = args.rango || 'semana';
+      const { desde, hasta } = rangoFechas(rango);
+      const horas = await visitas.horasTrabajadasEnRango(desde, hasta);
+      return { horas };
+    }
+
+    case 'consultar_resumen_dia': {
+      const { desde, hasta } = rangoFechas('hoy');
+      const visitasHoy = await visitas.visitasEnRango(desde, hasta);
+      const cobrosPend = await cobros.cobrosPendientes();
+      const cobrosHoy = cobrosPend.filter((c) => c.fecha_vencimiento === new Date().toISOString().slice(0, 10));
+      return {
+        visitas_hoy: visitasHoy.map((v) => ({ hora: new Date(v.fecha_hora).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }), cliente: v.clientes?.nombre, descripcion: v.descripcion })),
+        cobros_que_vencen_hoy: cobrosHoy.map((c) => ({ cliente: c.clientes?.nombre, monto: c.monto })),
+      };
     }
 
     case 'crear_recordatorio': {
@@ -1259,7 +1431,14 @@ async function enviarAgendaDelDia(chatId) {
     msg += 'No tenés nada pendiente para hoy. 👍';
   } else {
     msg += `Tenés ${visitasHoy.length} trabajo(s) agendado(s)${recs.length ? ` y ${recs.length} recordatorio(s)` : ''}.\n\n`;
-    visitasHoy.forEach((v) => { msg += `🔧 ${new Date(v.fecha_hora).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })} - ${v.clientes?.nombre}: ${v.descripcion}${v.clientes?.direccion ? ' (' + v.clientes.direccion + ')' : ''}\n`; });
+    for (const v of visitasHoy) {
+      let linea = `🔧 ${new Date(v.fecha_hora).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })} - ${v.clientes?.nombre}: ${v.descripcion}${v.clientes?.direccion ? ' (' + v.clientes.direccion + ')' : ''}`;
+      const pendientesCliente = await cobros.obtenerCobrosPorCliente(v.cliente_id);
+      const deuda = pendientesCliente.find((c) => c.estado === 'pendiente');
+      if (deuda) linea += ` — 💰 debe $${Number(deuda.monto) - Number(deuda.monto_pagado || 0)}`;
+      if (v.que_llevar) linea += `\n   📦 Llevar: ${v.que_llevar}`;
+      msg += linea + '\n';
+    }
     recs.forEach((r) => { msg += `⏰ ${new Date(r.fecha_hora).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })} - ${r.texto}\n`; });
     mants.forEach((m) => { msg += `🔧 Mantenimiento: ${m.tipo} de ${m.clientes?.nombre}${m.aviso_automatico ? ' (se le avisa solo)' : ' (contactalo vos)'}\n`; });
 
