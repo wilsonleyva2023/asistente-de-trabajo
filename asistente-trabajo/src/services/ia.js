@@ -9,6 +9,8 @@ const INSTRUCCION_SISTEMA = `Sos el asistente personal de un técnico argentino 
 Gestionás: clientes, presupuestos, recibos, trabajos, equipos, agenda, cobros, notas, catálogo de servicios y herramientas propias.
 
 GENERAL:
+- REGLA ABSOLUTA, la más importante de todas: NUNCA muestres un nombre, dato, cliente, monto o fecha que no venga literalmente en el resultado de una herramienta o en lo que el usuario escribió. Si una herramienta te devuelve una lista, tu respuesta debe listar EXACTAMENTE esos elementos, ni uno más — nunca "completes" la lista con ejemplos, nombres típicos, ni nada inventado, aunque parezca útil o quede prolijo. Si la lista está vacía o corta, decilo tal cual, no la rellenes. Ante la duda de si un dato es real o lo estás completando de memoria, no lo digas.
+- Si el usuario pide una acción sobre un cliente y el nombre que dio no encuentra resultados exactos, usá buscar_cliente para confirmar qué existe realmente antes de probar con otras herramientas al azar (como buscar por categoría) — no adivines ni pruebes herramientas que no tienen que ver con lo que se pidió.
 - Priorizá usar una herramienta si el pedido encaja. Si falta un dato obligatorio, preguntalo.
 - Fuera de herramientas: si es sobre su oficio/negocio (dudas técnicas, cálculos, redactar mensajes), respondé directo y breve. Si es totalmente ajeno, redirigí amablemente a lo que podés hacer.
 - "Activos" de la charla: recordá el último cliente/presupuesto/cobro/visita/equipo/nota/reporte/herramienta mencionado, y usalo cuando el usuario no aclare de cuál habla ("agregale el teléfono", "mandalo en pdf"). Solo cambiás si nombran algo distinto explícitamente.
@@ -40,6 +42,7 @@ CATÁLOGO DE SERVICIOS: mano de obra es un valor fijo; materiales es un rango es
 HERRAMIENTAS PROPIAS: al agendar, si el usuario menciona qué lleva, guardalo en esa visita. Al completar la visita, preguntá si recuperó todo lo que llevó; si falta algo, quedá pendiente de recuperar en ese cliente hasta que confirme.
 
 AGENDA Y VISITAS (agendar_trabajo = visita a cliente con fecha/hora; crear_recordatorio = aviso general sin cliente):
+- Cuando generes una fecha/hora para guardar (fecha_hora_iso, nueva_fecha_hora_iso, cumpleanos_iso, etc.), armala siempre con el offset de Argentina explícito al final: "-03:00" (ej: "2026-07-19T22:09:00-03:00"). Nunca la mandes sin offset ni calculada en otro huso horario.
 - "Mi agenda"/rango no aclarado → semana por defecto, llamando tanto a consultar_agenda como a consultar_recordatorios (visitas y recordatorios sueltos, nunca uno sin el otro). Día puntual no relativo ("el jueves", "25 de julio") → calculá la fecha y pasala como fecha_iso.
 - Estas consultas devuelven datos crudos: armá VOS la respuesta organizada por día, mencionando presupuesto/deuda de cada visita y si hay zonas muy distintas el mismo día.
 - Al agendar: aviso previo default 2hs si no aclaran; avisá si el día ya tiene 4+ visitas, si choca con otra visita/horario bloqueado, o si el cliente tiene deuda o mantenimiento próximo (sugerí aprovechar la visita).
@@ -57,11 +60,11 @@ HERRAMIENTAS PROPIAS: si al agendar o hablar de una visita el usuario menciona q
 
 REPORTES: preguntas casuales ("cómo ando", "cómo va el negocio") = pedido de reporte; si es amplio, usá consultar_negocio_completo. Texto corto por defecto (3-5 líneas), PDF solo si lo piden. Comparaciones con palabra clara (mejor/peor/similar) además del %. Alertas urgentes antes que números fríos. Períodos naturales ("mes pasado", "este año") calculados por vos.
 
-FOTOS/AUDIO/DOCUMENTOS: sin instrucción clara, decidí según contexto reciente (no preguntes salvo ambigüedad real). Ticket/comprobante → leé el monto vos y usá registrar_gasto_desde_ticket. Chapita de equipo con marca/modelo/serie → leelo vos y usá editar_equipo. Documento largo → resumen de 2-3 líneas. Confirmación cortita al guardar.
+FOTOS/AUDIO/DOCUMENTOS: sin instrucción clara, decidí según contexto reciente (no preguntes salvo ambigüedad real). Si un cliente puede tener varios trabajos distintos en el tiempo, guardá y buscá las fotos ligadas al trabajo puntual (trabajo_texto), no solo al cliente — si el usuario pide "las fotos del termotanque" y hay más de un trabajo que coincide, preguntá cuál antes de mostrar cualquiera. Ticket/comprobante → leé el monto vos y usá registrar_gasto_desde_ticket. Chapita de equipo con marca/modelo/serie → leelo vos y usá editar_equipo. Documento largo → resumen de 2-3 líneas. Confirmación cortita al guardar.
 
 FORMATO (Telegram, sin markdown): nunca ** ni _; listas con • ; emojis con moderación (✅📋💰📅🔧⚠️📝); frases cortas tipo WhatsApp.
 
-Fecha y hora actuales: ${new Date().toISOString()}`;
+Fecha y hora actuales en Argentina: ${new Date().toLocaleString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires', dateStyle: 'full', timeStyle: 'short' })} (usá siempre esta hora como referencia de "ahora", nunca calcules en otro huso horario)`;
 
 const ITEM_SCHEMA = { type: 'OBJECT', properties: { descripcion: { type: 'STRING' }, monto: { type: 'NUMBER' } }, required: ['descripcion', 'monto'] };
 const CID = { type: 'STRING', description: 'ID exacto del cliente si ya se identificó en esta charla (evita ambigüedad).' };
@@ -351,12 +354,13 @@ const HERRAMIENTAS = [
       },
       {
         name: 'guardar_foto',
-        description: 'Guarda la última foto adjunta ligada a un cliente y/o a su presupuesto activo (queda disponible para siempre). Si el usuario menciona que es de "antes", "después", "firma" o "ticket/comprobante", asignale esa etiqueta.',
+        description: 'Guarda la última foto adjunta ligada a un cliente y a un trabajo puntual suyo (queda disponible para siempre). Si el usuario menciona que es de "antes", "después", "firma" o "ticket/comprobante", asignale esa etiqueta.',
         parameters: {
           type: 'OBJECT',
           properties: {
             cliente_id: CID,
             cliente_nombre: CNOM,
+            trabajo_texto: { type: 'STRING', description: 'De qué trabajo puntual es la foto (ej: "termotanque", "inodoro"), para poder buscarla después. Si no se aclara, se liga al trabajo más reciente del cliente.' },
             descripcion: { type: 'STRING' },
             etiqueta: { type: 'STRING', description: "'antes', 'despues', 'firma', 'ticket', o vacío si es general." },
           },
@@ -364,9 +368,32 @@ const HERRAMIENTAS = [
         },
       },
       {
+        name: 'eliminar_foto',
+        description: 'Borra una foto de un cliente, identificándola por su descripción/etiqueta o el trabajo al que pertenece. SOLO tras confirmación explícita.',
+        parameters: {
+          type: 'OBJECT',
+          properties: { cliente_id: CID, cliente_nombre: CNOM, busqueda: { type: 'STRING', description: 'Texto que identifica la foto (descripción, etiqueta, o trabajo).' } },
+          required: ['cliente_nombre', 'busqueda'],
+        },
+      },
+      {
+        name: 'eliminar_documento',
+        description: 'Borra un documento guardado de un cliente, identificándolo por su nombre. SOLO tras confirmación explícita.',
+        parameters: { type: 'OBJECT', properties: { cliente_id: CID, cliente_nombre: CNOM, busqueda: { type: 'STRING' } }, required: ['cliente_nombre', 'busqueda'] },
+      },
+      {
         name: 'ver_fotos_cliente',
-        description: 'Muestra la galería de fotos guardadas de un cliente.',
-        parameters: { type: 'OBJECT', properties: { cliente_id: CID, cliente_nombre: CNOM }, required: ['cliente_nombre'] },
+        description: 'Muestra fotos guardadas de un cliente. Si el usuario nombra un trabajo puntual (ej: "las del termotanque") o una etiqueta (antes/después), filtrá por eso — no muestres todas mezcladas si el pedido fue específico.',
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            cliente_id: CID,
+            cliente_nombre: CNOM,
+            trabajo_texto: { type: 'STRING', description: 'Filtrar solo las fotos de ese trabajo puntual.' },
+            etiqueta: { type: 'STRING', description: "'antes', 'despues', etc., para filtrar solo esas." },
+          },
+          required: ['cliente_nombre'],
+        },
       },
       {
         name: 'guardar_documento_cliente',
