@@ -33,6 +33,12 @@ function iniciarTareasProgramadas() {
   // Garantías por vencer, una vez al día
   cron.schedule('0 9 * * *', () => revisarGarantias(CHAT_ID), { timezone: TZ });
 
+  // Presupuestos por vencer sin respuesta
+  cron.schedule('0 11 * * *', () => revisarPresupuestosPorVencer(CHAT_ID), { timezone: TZ });
+
+  // Cobros vencidos, agrupados en un solo aviso
+  cron.schedule('30 9 * * *', () => revisarCobrosVencidos(CHAT_ID), { timezone: TZ });
+
   // Resumen de fin de día, a las 19:00
   cron.schedule('0 19 * * *', () => enviarResumenDelDia(CHAT_ID), { timezone: TZ });
 
@@ -51,6 +57,10 @@ async function enviarResumenSemanal(chatId) {
   if (cobrosPend.length) {
     const total = cobrosPend.reduce((acc, c) => acc + (Number(c.monto) - Number(c.monto_pagado || 0)), 0);
     msg += `Total pendiente de cobro: $${total}\n`;
+    cobrosPend.slice(0, 8).forEach((c) => {
+      const restante = Number(c.monto) - Number(c.monto_pagado || 0);
+      msg += `  • ${c.clientes?.nombre || 'Cliente'} - $${restante}\n`;
+    });
 
     // Alerta de dependencia: si 2 clientes concentran más del 50% de lo pendiente
     const porCliente = {};
@@ -106,6 +116,30 @@ async function revisarGarantias(chatId) {
   for (const t of lista) {
     await bot.telegram.sendMessage(chatId, `⚠️ La garantía del trabajo "${t.descripcion}" de ${t.clientes?.nombre} vence el ${t.garantia_vencimiento}.`);
   }
+}
+
+async function revisarPresupuestosPorVencer(chatId) {
+  const lista = await presupuestos.presupuestosPorVencer();
+  for (const p of lista) {
+    const dias = p.dias_validez || 15;
+    await bot.telegram.sendMessage(
+      chatId,
+      `📋 El presupuesto de ${p.clientes?.nombre} (${p.descripcion}, $${p.monto}) está por vencer.\n\n` +
+        `💬 Mensaje listo:\n"Hola ${p.clientes?.nombre}! Tu presupuesto está por vencer. ¿Seguimos adelante con el trabajo?"`
+    );
+    await presupuestos.marcarAvisoVencimientoEnviado(p.id);
+  }
+}
+
+async function revisarCobrosVencidos(chatId) {
+  const lista = await cobros.cobrosVencidos();
+  if (!lista.length) return;
+  let msg = '⚠️ Cobros vencidos:\n\n';
+  lista.forEach((c) => {
+    const restante = Number(c.monto) - Number(c.monto_pagado || 0);
+    msg += `• ${c.clientes?.nombre} - $${restante} (vencía ${c.fecha_vencimiento})\n`;
+  });
+  await bot.telegram.sendMessage(chatId, msg);
 }
 
 async function enviarResumenDelDia(chatId) {
