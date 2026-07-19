@@ -133,6 +133,29 @@ const CATEGORIAS = {
       rapido: { titulo: 'Comando rápido', texto: '⚡ COMANDO RÁPIDO\n\n/fotos — tus últimos archivos guardados' },
     },
   },
+  catalogo: {
+    titulo: '📋 Catálogo y tarifas',
+    temas: {
+      guardar: { titulo: 'Guardar un servicio', texto: '📋 GUARDAR UN SERVICIO\n\n"Guardá en el catálogo: cambio de térmica, mano de obra $15000, materiales entre $8000 y $15000"\n\nMano de obra queda fija. Materiales queda como estimado, aclarado en el PDF.' },
+      usar: { titulo: 'Usar el catálogo en un presupuesto', texto: '💡 USAR EL CATÁLOGO\n\n"Hacele a Roberto el presupuesto de cambio de térmica"\n\nSi está en el catálogo, arma el presupuesto solo con esos precios.' },
+      editar: { titulo: 'Editar precios', texto: '✏️ EDITAR\n\n"El cambio de térmica ahora sale $18000"\n"Subí todo el catálogo un 10%" (actualización masiva)' },
+      ver: { titulo: 'Ver el catálogo', texto: '👀 VER CATÁLOGO\n\n"Dame el catálogo completo"\n"Mandámelo en pdf" — para mostrarle al cliente' },
+      estadistica: { titulo: 'Servicio más usado', texto: '📊 MÁS USADOS\n\n"¿Qué servicio vendo más?"' },
+      rapido: { titulo: 'Comando rápido', texto: '⚡ COMANDO RÁPIDO\n\n/catalogo — tu lista completa al toque' },
+    },
+  },
+  herramientas: {
+    titulo: '🧰 Herramientas',
+    temas: {
+      llevar: { titulo: 'Qué llevo a una visita', texto: '🧰 QUÉ LLEVO\n\n"A lo de Roberto llevo el taladro y el multímetro"\n\nQueda anotado en esa visita.' },
+      confirmar: { titulo: 'Confirmar que recuperé todo', texto: '✅ CONFIRMAR RECUPERACIÓN\n\nAl terminar la visita te pregunto solo si recuperaste todo.\n\n"Me olvidé el multímetro" — queda pendiente en ese cliente hasta que lo confirmes.' },
+      kit: { titulo: 'Kit habitual', texto: '🎒 KIT HABITUAL\n\n"Llevo lo de siempre" carga todo tu kit de una, sin nombrar cada cosa.' },
+      estado: { titulo: 'Estado de una herramienta', texto: '🔧 ESTADO\n\n"El taladro está roto"\n"El multímetro necesita mantenimiento"' },
+      pendientes: { titulo: 'Ver pendientes', texto: '📋 PENDIENTES\n\n"¿Qué herramientas me quedaron pendientes de recuperar?"' },
+      patron: { titulo: 'Qué se te olvida más', texto: '📊 PATRÓN DE OLVIDOS\n\n"¿Qué herramienta se me pierde más seguido?"' },
+      rapido: { titulo: 'Comando rápido', texto: '⚡ COMANDO RÁPIDO\n\n/herramientas — tus pendientes de recuperar al toque' },
+    },
+  },
 };
 
 function tecladoCategorias() {
