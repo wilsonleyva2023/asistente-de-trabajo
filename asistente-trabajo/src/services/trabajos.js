@@ -91,6 +91,15 @@ async function trabajosRepetidos(cliente_id, meses = 6) {
   return data;
 }
 
+// Ganancia neta de un trabajo: lo cobrado (vía el presupuesto asociado) menos el gasto en materiales
+async function rentabilidad(trabajo_id) {
+  const { data: trabajo, error } = await supabase.from('trabajos').select('*, presupuestos(monto)').eq('id', trabajo_id).single();
+  if (error) throw error;
+  const cobrado = trabajo.presupuestos?.monto || 0;
+  const gasto = Number(trabajo.gasto_materiales || 0);
+  return { cobrado, gasto, ganancia_neta: cobrado - gasto };
+}
+
 module.exports = {
   registrarTrabajo,
   editarTrabajo,
@@ -101,4 +110,5 @@ module.exports = {
   trabajosEnRango,
   registrarSatisfaccion,
   trabajosRepetidos,
+  rentabilidad,
 };
