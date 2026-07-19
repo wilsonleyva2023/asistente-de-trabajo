@@ -16,4 +16,9 @@ async function documentosDeCliente(cliente_id) {
   return data;
 }
 
-module.exports = { guardarDocumento, documentosDeCliente };
+async function eliminarDocumento(id) {
+  const { error } = await supabase.from('documentos').delete().eq('id', id);
+  if (error) throw error;
+}
+
+module.exports = { guardarDocumento, documentosDeCliente, eliminarDocumento };
