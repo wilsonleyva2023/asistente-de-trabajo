@@ -193,6 +193,20 @@ async function listarTodos() {
   return data;
 }
 
+// Presupuestos rechazados hace bastante tiempo, para sugerir reintentar
+async function rechazadosParaReintentar(mesesMinimo = 3) {
+  const limite = new Date();
+  limite.setMonth(limite.getMonth() - mesesMinimo);
+  const { data, error } = await supabase
+    .from('presupuestos')
+    .select('*, clientes(nombre, telefono)')
+    .eq('archivado', false)
+    .eq('estado', 'rechazado')
+    .lt('fecha_ultimo_contacto', limite.toISOString());
+  if (error) throw error;
+  return data;
+}
+
 module.exports = {
   crearPresupuesto,
   obtenerItems,
@@ -210,4 +224,5 @@ module.exports = {
   presupuestosArchivados,
   historialCompleto,
   listarTodos,
+  rechazadosParaReintentar,
 };
