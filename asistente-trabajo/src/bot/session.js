@@ -80,6 +80,22 @@ function obtenerCobroActivo(chatId) {
   return cobroActivo.get(chatId) || null;
 }
 
+const visitaActiva = new Map();
+function setVisitaActiva(chatId, visitaId) {
+  visitaActiva.set(chatId, visitaId);
+}
+function obtenerVisitaActiva(chatId) {
+  return visitaActiva.get(chatId) || null;
+}
+
+const equipoActivo = new Map();
+function setEquipoActivo(chatId, equipoId) {
+  equipoActivo.set(chatId, equipoId);
+}
+function obtenerEquipoActivo(chatId) {
+  return equipoActivo.get(chatId) || null;
+}
+
 module.exports = {
   get, set, limpiar, obtenerHistorial, podarHistorial, limpiarHistorial,
   setClienteActivo, obtenerClienteActivo,
@@ -88,4 +104,6 @@ module.exports = {
   guardarUltimaAccion, obtenerUltimaAccion,
   setUltimaFotoUrl, obtenerUltimaFotoUrl,
   setCobroActivo, obtenerCobroActivo,
+  setVisitaActiva, obtenerVisitaActiva,
+  setEquipoActivo, obtenerEquipoActivo,
 };
