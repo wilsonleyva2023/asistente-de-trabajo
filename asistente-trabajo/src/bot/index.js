@@ -14,6 +14,8 @@ const notas = require('../services/notas');
 const reportes = require('../services/reportes');
 const documentos = require('../services/documentos');
 const audios = require('../services/audios');
+const catalogo = require('../services/catalogo');
+const herramientas = require('../services/herramientas');
 const pdf = require('../services/pdf');
 const ia = require('../services/ia');
 const storage = require('../services/storage');
@@ -108,6 +110,8 @@ bot.command('reporte', async (ctx) => {
   await ctx.reply(`📊 Reporte de ${r.mes}:\n\n💰 Facturado: $${r.facturado}\n✅ Cobrado: $${r.cobrado}\n⏳ Pendiente: $${r.pendiente}`);
 });
 bot.command('fotos', (ctx) => ejecutarHerramienta(ctx, 'listar_archivos_recientes', {}));
+bot.command('catalogo', (ctx) => ejecutarHerramienta(ctx, 'listar_catalogo', {}));
+bot.command('herramientas', (ctx) => ejecutarHerramienta(ctx, 'consultar_pendientes_recuperar', {}));
 
 // ================= ROUTER PRINCIPAL =================
 
@@ -1378,6 +1382,113 @@ async function ejecutarHerramienta(ctx, nombre, args) {
     case 'eliminar_notas_completadas': {
       const cantidad = await notas.eliminarCompletadas();
       return { ok: true, cantidad };
+    }
+
+    // ---- CATÁLOGO DE SERVICIOS ----
+    case 'guardar_servicio_catalogo': {
+      await catalogo.guardarServicio({
+        nombre: args.nombre, categoria: args.categoria, mano_obra: args.mano_obra,
+        materiales_min: args.materiales_min, materiales_max: args.materiales_max,
+        garantia_dias: args.garantia_dias, duracion_minutos: args.duracion_minutos, materiales_tipicos: args.materiales_tipicos,
+      });
+      return { ok: true };
+    }
+    case 'editar_servicio_catalogo': {
+      const encontrados = await catalogo.buscarServicio(args.nombre || '');
+      if (!encontrados.length) return { error: `No encontré ningún servicio llamado "${args.nombre}".` };
+      const cambios = {};
+      if (args.nueva_mano_obra !== undefined) cambios.mano_obra = args.nueva_mano_obra;
+      if (args.nuevos_materiales_min !== undefined) cambios.materiales_min = args.nuevos_materiales_min;
+      if (args.nuevos_materiales_max !== undefined) cambios.materiales_max = args.nuevos_materiales_max;
+      if (!Object.keys(cambios).length) return { error: 'No se especificó qué cambiar.' };
+      await catalogo.editarServicio(encontrados[0].id, cambios);
+      return { ok: true };
+    }
+    case 'eliminar_servicio_catalogo': {
+      const encontrados = await catalogo.buscarServicio(args.nombre || '');
+      if (!encontrados.length) return { error: `No encontré ningún servicio llamado "${args.nombre}".` };
+      await catalogo.eliminarServicio(encontrados[0].id);
+      return { ok: true };
+    }
+    case 'buscar_servicio_catalogo': {
+      const encontrados = await catalogo.buscarServicio(args.nombre || '');
+      if (!encontrados.length) return { encontrado: false };
+      await catalogo.incrementarUso(encontrados[0].id);
+      return { encontrado: true, servicio: encontrados[0] };
+    }
+    case 'listar_catalogo': {
+      const lista = await catalogo.listarServicios(args.categoria);
+      if (!lista.length) { await ctx.reply('No tenés servicios cargados en el catálogo todavía.'); return { cantidad: 0 }; }
+      let msg = '📋 Catálogo de servicios:\n\n';
+      lista.forEach((s) => { msg += `• ${s.nombre}: mano de obra $${s.mano_obra}, materiales $${s.materiales_min}-$${s.materiales_max}\n`; });
+      await ctx.reply(msg);
+      return { cantidad: lista.length };
+    }
+    case 'actualizar_precios_catalogo': {
+      const cantidad = await catalogo.actualizarPreciosMasivo(args.porcentaje);
+      return { ok: true, cantidad };
+    }
+    case 'consultar_servicio_mas_usado': {
+      const lista = await catalogo.servicioMasUsado(5);
+      return { servicios: lista.map((s) => ({ nombre: s.nombre, veces_usado: s.veces_usado })) };
+    }
+    case 'exportar_catalogo_pdf': {
+      const lista = await catalogo.listarServicios();
+      if (!lista.length) return { error: 'No tenés servicios cargados en el catálogo.' };
+      const contenido = lista.map((s) => `${s.nombre}\nMano de obra: $${s.mano_obra}\nMateriales estimados: $${s.materiales_min} - $${s.materiales_max}\n`).join('\n');
+      const buffer = await pdf.generarDocumentoLibre({ titulo: 'Catálogo de Servicios', contenido });
+      await enviarDocumentoConReintento(ctx, { source: buffer, filename: 'catalogo-servicios.pdf' });
+      return { ok: true };
+    }
+
+    // ---- HERRAMIENTAS PROPIAS ----
+    case 'registrar_llevadas_visita': {
+      const cliente = await resolverCliente(ctx, args);
+      if (!cliente) return errorClienteNoEncontrado(args.cliente_nombre);
+      if (cliente.multiple) return errorClienteAmbiguo(cliente.opciones);
+      const visitaId = session.obtenerVisitaActiva(ctx.chat.id) || (await visitas.proximaVisitaPendiente(cliente.id))?.id;
+      if (!visitaId) return { error: `${cliente.nombre} no tiene una visita agendada para asociarle las herramientas.` };
+      await herramientas.registrarLlevadas(visitaId, cliente.id, args.items || []);
+      for (const item of args.items || []) await herramientas.agregarAlKit(item);
+      return { ok: true };
+    }
+    case 'confirmar_recuperacion_herramientas': {
+      const cliente = await resolverCliente(ctx, args);
+      if (!cliente) return errorClienteNoEncontrado(args.cliente_nombre);
+      if (cliente.multiple) return errorClienteAmbiguo(cliente.opciones);
+      const visita = await visitas.proximaVisitaPendiente(cliente.id);
+      const visitaId = visita?.id || session.obtenerVisitaActiva(ctx.chat.id);
+      if (!visitaId) return { error: `No encontré una visita reciente de ${cliente.nombre} con herramientas registradas.` };
+      if (args.item_puntual) {
+        await herramientas.marcarPendiente(visitaId, args.item_puntual);
+        return { ok: true, mensaje: `"${args.item_puntual}" quedó marcada como pendiente de recuperar en lo de ${cliente.nombre}.` };
+      }
+      await herramientas.marcarTodasRecuperadas(visitaId);
+      return { ok: true };
+    }
+    case 'consultar_pendientes_recuperar': {
+      const lista = await herramientas.pendientesRecuperar();
+      if (!lista.length) { await ctx.reply('No te quedó ninguna herramienta pendiente de recuperar. 👍'); return { cantidad: 0 }; }
+      let msg = '🧰 Herramientas pendientes de recuperar:\n\n';
+      lista.forEach((h) => { msg += `• ${h.item} en lo de ${h.clientes?.nombre}\n`; });
+      await ctx.reply(msg);
+      return { cantidad: lista.length };
+    }
+    case 'consultar_kit_habitual': {
+      const lista = await herramientas.listarKit();
+      if (!lista.length) { await ctx.reply('No tenés un kit habitual guardado todavía.'); return { cantidad: 0 }; }
+      let msg = '🧰 Tu kit habitual:\n\n';
+      lista.forEach((h) => { msg += `• ${h.nombre}${h.estado !== 'buena' ? ' (' + h.estado + ')' : ''}\n`; });
+      await ctx.reply(msg);
+      return { cantidad: lista.length };
+    }
+    case 'marcar_estado_herramienta': {
+      await herramientas.marcarEstado(args.nombre, args.estado, args.notas);
+      return { ok: true };
+    }
+    case 'consultar_historial_olvidos': {
+      const conteo = await herramientas.historialOlvidos();
+      return { olvidos: conteo };
     }
 
     // ---- DOCUMENTOS Y REPORTES ----
