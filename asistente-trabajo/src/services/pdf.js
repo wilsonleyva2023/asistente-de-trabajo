@@ -31,7 +31,7 @@ function generarPDFBuffer(dibujarContenido) {
   });
 }
 
-function encabezado(doc, titulo, numero, fecha) {
+function encabezado(doc, titulo, numero, fecha, diasValidez) {
   const ancho = doc.page.width;
   const altoBanda = 100;
 
@@ -72,7 +72,9 @@ function encabezado(doc, titulo, numero, fecha) {
   doc.fillColor(DORADO).fontSize(19).font('Helvetica-Bold').text(titulo.toUpperCase(), 0, 14, { align: 'right', width: ancho - 30 });
   doc.fillColor(BLANCO).fontSize(9).font('Helvetica').text(`N° ${numero}`, 0, 38, { align: 'right', width: ancho - 30 });
   doc.text(`Fecha: ${fecha}`, 0, 50, { align: 'right', width: ancho - 30 });
-  doc.fillColor('#cccccc').fontSize(7.5).font('Helvetica-Oblique').text('Validez: 15 días corridos', 0, 62, { align: 'right', width: ancho - 30 });
+  if (diasValidez) {
+    doc.fillColor('#cccccc').fontSize(7.5).font('Helvetica-Oblique').text(`Validez: ${diasValidez} días corridos`, 0, 62, { align: 'right', width: ancho - 30 });
+  }
 
   doc.rect(0, altoBanda - 2, ancho, 2).fill(DORADO);
 
@@ -135,10 +137,19 @@ function bloqueTexto(doc, y, titulo, parrafo) {
   return doc.y + 8;
 }
 
-function piePagina(doc) {
+function piePagina(doc, sello) {
   const ancho = doc.page.width;
   const alto = doc.page.height;
+  if (sello) {
+    doc.save();
+    doc.rotate(-15, { origin: [ancho / 2, alto / 2] });
+    doc.fillColor(sello === 'PAGADO' ? '#2e7d32' : '#c9a227').fontSize(46).font('Helvetica-Bold').opacity(0.25).text(sello, 0, alto / 2 - 30, { width: ancho, align: 'center' });
+    doc.opacity(1);
+    doc.restore();
+  }
   doc.rect(30, alto - 40, ancho - 60, 1).fill(DORADO);
+  const firma = `Firmado digitalmente por ${TITULAR || MARCA}`;
+  doc.fillColor('#777777').fontSize(7).font('Helvetica-Oblique').text(firma, 30, alto - 46, { width: ancho - 60, align: 'center' });
   const partes = [MARCA, TITULAR, CUIT ? `CUIT ${CUIT}` : null, TELEFONO ? `Cel ${TELEFONO}` : null].filter(Boolean).join('  ·  ');
   doc.fillColor('#999999').fontSize(7.3).font('Helvetica').text(partes, 30, alto - 33, { width: ancho - 60, align: 'center' });
   const redes = [SITIO_WEB, FACEBOOK, INSTAGRAM].filter(Boolean).join('  ·  ');
@@ -159,6 +170,7 @@ async function generarPresupuesto({
   descripcion,
   monto,
   numero = '0001',
+  diasValidez = 15,
   direccionTrabajo,
   alcance,
   incluirAlcance = true,
@@ -169,7 +181,7 @@ async function generarPresupuesto({
 }) {
   const listaItems = items && items.length ? items : [{ descripcion, monto }];
   return generarPDFBuffer((doc) => {
-    let y = encabezado(doc, 'Presupuesto', numero, new Date().toLocaleDateString('es-AR'));
+    let y = encabezado(doc, 'Presupuesto', numero, new Date().toLocaleDateString('es-AR'), diasValidez);
     const clienteMostrado = direccionTrabajo ? { ...cliente, direccion: direccionTrabajo } : cliente;
     y = datosCliente(doc, y, clienteMostrado);
     const { y: y2, total } = tablaItems(doc, y, listaItems);
@@ -187,14 +199,14 @@ async function generarPresupuesto({
   });
 }
 
-async function generarRecibo({ cliente, items, monto, concepto, numero = '0001' }) {
+async function generarRecibo({ cliente, items, monto, concepto, numero = '0001', esPagoParcial = false }) {
   const listaItems = items && items.length ? items : [{ descripcion: concepto, monto }];
   return generarPDFBuffer((doc) => {
     let y = encabezado(doc, 'Recibo de Pago', numero, new Date().toLocaleDateString('es-AR'));
     y = datosCliente(doc, y, cliente);
     const { y: y2, total } = tablaItems(doc, y, listaItems);
-    totalFinal(doc, y2, total, 'RECIBIDO');
-    piePagina(doc);
+    totalFinal(doc, y2, total, esPagoParcial ? 'PAGO PARCIAL' : 'RECIBIDO');
+    piePagina(doc, esPagoParcial ? 'PAGO PARCIAL' : 'PAGADO');
   });
 }
 
