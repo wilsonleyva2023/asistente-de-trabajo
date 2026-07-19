@@ -23,9 +23,14 @@ function obtenerHistorial(chatId) {
 // Evita que el historial crezca sin límite (y con eso, el costo por mensaje)
 function podarHistorial(chatId, maxTurnos = 16) {
   const h = obtenerHistorial(chatId);
-  if (h.length > maxTurnos) {
-    historiales.set(chatId, h.slice(h.length - maxTurnos));
+  if (h.length <= maxTurnos) return;
+  let corte = h.length - maxTurnos;
+  // Nunca cortar justo después de un mensaje "model" con functionCall: hay que
+  // conservar su respuesta ("user" con functionResponse) pegada al lado, o Gemini rechaza el historial.
+  while (corte < h.length && h[corte]?.role === 'user' && h[corte]?.parts?.some((p) => p.functionResponse)) {
+    corte++;
   }
+  historiales.set(chatId, h.slice(corte));
 }
 
 function limpiarHistorial(chatId) {
