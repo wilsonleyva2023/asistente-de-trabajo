@@ -241,4 +241,25 @@ async function generarBitacora({ titulo, trabajos }) {
   });
 }
 
-module.exports = { generarRecibo, generarPresupuesto, generarDocumentoLibre, generarExtracto, generarBitacora };
+async function generarAgendaPdf({ titulo, dias }) {
+  return generarPDFBuffer((doc) => {
+    let y = encabezado(doc, titulo, '—', new Date().toLocaleDateString('es-AR'));
+    (dias || []).forEach((dia) => {
+      doc.fillColor(DORADO).fontSize(10).font('Helvetica-Bold').text(dia.etiqueta, 30, y);
+      y = doc.y + 4;
+      if (!dia.items.length) {
+        doc.fillColor('#999999').fontSize(8.5).font('Helvetica-Oblique').text('Sin trabajos agendados', 40, y);
+        y = doc.y + 6;
+      } else {
+        dia.items.forEach((it) => {
+          doc.fillColor(NEGRO).fontSize(8.5).font('Helvetica').text(`${it.hora} - ${it.texto}`, 40, y, { width: doc.page.width - 70 });
+          y = doc.y + 4;
+        });
+      }
+      y += 6;
+    });
+    piePagina(doc);
+  });
+}
+
+module.exports = { generarRecibo, generarPresupuesto, generarDocumentoLibre, generarExtracto, generarBitacora, generarAgendaPdf };
