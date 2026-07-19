@@ -1,9 +1,23 @@
 const { supabase } = require('../db');
 
-async function crearRecordatorio({ texto, fecha_hora }) {
-  const { data, error } = await supabase.from('recordatorios').insert([{ texto, fecha_hora }]).select().single();
+async function crearRecordatorio({ texto, fecha_hora, recurrencia }) {
+  const { data, error } = await supabase.from('recordatorios').insert([{ texto, fecha_hora, recurrencia: recurrencia || null }]).select().single();
   if (error) throw error;
   return data;
+}
+
+// Los recordatorios recurrentes que ya pasaron su fecha se reprograman solos para el próximo ciclo.
+async function avanzarRecurrentes() {
+  const ahora = new Date();
+  const { data, error } = await supabase.from('recordatorios').select('*').not('recurrencia', 'is', null).lt('fecha_hora', ahora.toISOString());
+  if (error) throw error;
+  for (const r of data || []) {
+    const nueva = new Date(r.fecha_hora);
+    if (r.recurrencia === 'semanal') nueva.setDate(nueva.getDate() + 7);
+    else if (r.recurrencia === 'mensual') nueva.setMonth(nueva.getMonth() + 1);
+    else continue;
+    await supabase.from('recordatorios').update({ fecha_hora: nueva.toISOString() }).eq('id', r.id);
+  }
 }
 
 async function editarRecordatorio(id, cambios) {
@@ -70,4 +84,5 @@ module.exports = {
   recordatoriosPendientesHoy,
   recordatoriosEnRango,
   marcarCumplido,
+  avanzarRecurrentes,
 };
