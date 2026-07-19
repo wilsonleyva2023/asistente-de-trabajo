@@ -29,9 +29,10 @@ async function cancelarVisita(id) {
 }
 
 async function reagendarVisita(id, nuevaFechaHora) {
+  const { data: actual } = await supabase.from('visitas').select('veces_reagendada').eq('id', id).single();
   const { data, error } = await supabase
     .from('visitas')
-    .update({ fecha_hora: nuevaFechaHora, estado: 'pendiente', avisado: false })
+    .update({ fecha_hora: nuevaFechaHora, estado: 'pendiente', avisado: false, veces_reagendada: (actual?.veces_reagendada || 0) + 1 })
     .eq('id', id)
     .select('*, clientes(nombre)')
     .single();
@@ -51,7 +52,6 @@ async function visitasEnRango(desdeISO, hastaISO) {
   return data;
 }
 
-// Busca la visita pendiente más cercana de un cliente (para completar/reagendar por nombre)
 async function proximaVisitaPendiente(cliente_id) {
   const { data, error } = await supabase
     .from('visitas')
@@ -65,7 +65,6 @@ async function proximaVisitaPendiente(cliente_id) {
   return data;
 }
 
-// Para el chequeo de superposición de horarios
 async function visitasCercanas(fecha_hora, ventanaMinutos = 60) {
   const centro = new Date(fecha_hora);
   const desde = new Date(centro.getTime() - ventanaMinutos * 60000);
@@ -80,7 +79,6 @@ async function visitasCercanas(fecha_hora, ventanaMinutos = 60) {
   return data;
 }
 
-// Para el aviso automático de "faltan X horas"
 async function visitasParaAvisar() {
   const ahora = new Date();
   const { data, error } = await supabase.from('visitas').select('*, clientes(nombre, direccion, telefono)').eq('estado', 'pendiente').eq('avisado', false);
@@ -97,7 +95,6 @@ async function marcarAvisada(id) {
   if (error) throw error;
 }
 
-// Para el resumen de fin de día
 async function resumenDelDia(desdeISO, hastaISO) {
   const { data, error } = await supabase
     .from('visitas')
@@ -107,6 +104,47 @@ async function resumenDelDia(desdeISO, hastaISO) {
     .in('estado', ['completado', 'reagendado', 'cancelado']);
   if (error) throw error;
   return data;
+}
+
+// Cuántas visitas pendientes hay agendadas para un día puntual (para avisar si está sobrecargado)
+async function contarVisitasDelDia(fechaISO) {
+  const dia = new Date(fechaISO);
+  const inicio = new Date(dia); inicio.setHours(0, 0, 0, 0);
+  const fin = new Date(dia); fin.setHours(23, 59, 59, 999);
+  const { data, error } = await supabase.from('visitas').select('id').eq('estado', 'pendiente').gte('fecha_hora', inicio.toISOString()).lte('fecha_hora', fin.toISOString());
+  if (error) throw error;
+  return (data || []).length;
+}
+
+// Cuántas veces se completó una visita a un cliente en el último año
+async function contarVisitasCliente(cliente_id) {
+  const haceUnAnio = new Date();
+  haceUnAnio.setFullYear(haceUnAnio.getFullYear() - 1);
+  const { data, error } = await supabase.from('visitas').select('id').eq('cliente_id', cliente_id).eq('estado', 'completado').gte('fecha_hora', haceUnAnio.toISOString());
+  if (error) throw error;
+  return (data || []).length;
+}
+
+// Visitas pendientes que ya se reagendaron 2 o más veces (alerta)
+async function clientesQueReagendanMucho(minimo = 2) {
+  const { data, error } = await supabase.from('visitas').select('*, clientes(nombre)').gte('veces_reagendada', minimo).eq('estado', 'pendiente');
+  if (error) throw error;
+  return data;
+}
+
+// Días de un rango que no tienen ninguna visita pendiente (huecos libres)
+async function diasLibresEnRango(desdeISO, hastaISO) {
+  const lista = await visitasEnRango(desdeISO, hastaISO);
+  const diasConTrabajo = new Set(lista.map((v) => new Date(v.fecha_hora).toISOString().slice(0, 10)));
+  const libres = [];
+  const cursor = new Date(desdeISO);
+  const fin = new Date(hastaISO);
+  while (cursor <= fin) {
+    const clave = cursor.toISOString().slice(0, 10);
+    if (!diasConTrabajo.has(clave)) libres.push(clave);
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return libres;
 }
 
 module.exports = {
@@ -121,4 +159,8 @@ module.exports = {
   visitasParaAvisar,
   marcarAvisada,
   resumenDelDia,
+  contarVisitasDelDia,
+  contarVisitasCliente,
+  clientesQueReagendanMucho,
+  diasLibresEnRango,
 };
