@@ -7,6 +7,8 @@ const visitas = require('../services/visitas');
 const trabajos = require('../services/trabajos');
 const recordatorios = require('../services/recordatorios');
 const clientes = require('../services/clientes');
+const notas = require('../services/notas');
+const reportes = require('../services/reportes');
 
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID_PERMITIDO;
 const TZ = 'America/Argentina/Buenos_Aires';
@@ -48,13 +50,25 @@ function iniciarTareasProgramadas() {
   // Reprograma solos los recordatorios recurrentes (semanales/mensuales)
   cron.schedule('5 0 * * *', () => recordatorios.avanzarRecurrentes(), { timezone: TZ });
 
+  // Archiva notas viejas sin uso, una vez por semana
+  cron.schedule('0 3 * * 1', () => notas.archivarNotasViejas(6), { timezone: TZ });
+
+  // Resumen mensual automático, el último día de cada mes a las 20:00
+  cron.schedule('0 20 28-31 * *', () => enviarResumenMensualSiCorresponde(CHAT_ID), { timezone: TZ });
+
   console.log('Tareas programadas iniciadas.');
 }
 
 async function enviarResumenSemanal(chatId) {
   const pendientesRecontacto = await presupuestos.presupuestosParaRecontactar(7);
   const cobrosPend = await cobros.cobrosPendientes();
+  const mesActual = new Date().toISOString().slice(0, 7);
+  const comparacion = await reportes.compararMeses(mesActual);
   let msg = '📊 Resumen semanal:\n\n';
+  if (comparacion.variacion_porcentaje !== null) {
+    const tendencia = comparacion.variacion_porcentaje > 0 ? 'mejor' : comparacion.variacion_porcentaje < 0 ? 'peor' : 'similar';
+    msg += `💵 Vas ${tendencia} que el mes pasado (${comparacion.variacion_porcentaje > 0 ? '+' : ''}${comparacion.variacion_porcentaje}%)\n\n`;
+  }
   msg += `📋 Presupuestos para recontactar: ${pendientesRecontacto.length}\n`;
   msg += `💰 Cobros pendientes: ${cobrosPend.length}\n`;
   if (cobrosPend.length) {
@@ -160,6 +174,28 @@ async function avisarSiDiaLibre(chatId) {
   if (!lista.length) {
     await bot.telegram.sendMessage(chatId, '📅 Mañana tenés el día completamente libre. Podés aprovechar para trámites, buscar trabajo nuevo, o descansar. 😌');
   }
+}
+
+async function enviarResumenMensualSiCorresponde(chatId) {
+  const hoy = new Date();
+  const manana = new Date(hoy); manana.setDate(manana.getDate() + 1);
+  if (manana.getMonth() === hoy.getMonth()) return; // todavía no es el último día del mes
+
+  const mesISO = hoy.toISOString().slice(0, 7);
+  const { desde, hasta } = reportes.rangoMes(mesISO);
+  const facturado = await reportes.totalFacturadoEnRango(desde, hasta);
+  const comparacion = await reportes.compararMeses(mesISO);
+  const ranking = await reportes.rankingClientes(desde, hasta, 3);
+
+  let msg = `📊 Cierre del mes (${mesISO}):\n\n💰 Facturado: $${facturado}\n`;
+  if (comparacion.variacion_porcentaje !== null) {
+    msg += `${comparacion.variacion_porcentaje >= 0 ? '📈' : '📉'} ${comparacion.variacion_porcentaje > 0 ? '+' : ''}${comparacion.variacion_porcentaje}% vs. el mes anterior\n`;
+  }
+  if (ranking.length) {
+    msg += `\n🏆 Mejores clientes del mes:\n`;
+    ranking.forEach((c) => { msg += `  • ${c.nombre}: $${c.total}\n`; });
+  }
+  await bot.telegram.sendMessage(chatId, msg);
 }
 
 async function enviarResumenDelDia(chatId) {
