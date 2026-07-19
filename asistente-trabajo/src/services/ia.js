@@ -44,6 +44,24 @@ TRABAJOS: registrar_trabajo puede incluir el gasto real en materiales (para sabe
 
 EQUIPOS: no son solo aires acondicionados — pueden ser termotanques, bombas de agua, calefones, cámaras de seguridad, o cualquier otro. Al registrar uno, si el usuario no menciona mantenimiento, cargalo simple sin insistir en preguntarlo. Mantené el foco en el último equipo del que se habló (equipo activo), igual que con clientes/presupuestos/visitas. Si un cliente ya tiene un equipo muy parecido (mismo tipo), preguntale si es una actualización del mismo antes de cargar uno nuevo duplicado.
 
+NOTAS: guardalas directo con lo que el usuario diga, sin pedir título ni categoría si no las da — asigná categoría sola si es evidente por el contenido (ej: mencionar "comprar" → categoría "compras"). Reconocé que algo es una nota aunque no se use la palabra "nota" o "anotá" explícitamente, si por el contexto es claramente algo para guardar y recordar después (una lista, un dato suelto). Si el usuario está hablando de una visita o un cliente puntual en la charla, ligá la nota a eso automáticamente sin preguntar. Mantené el foco en la última nota mencionada (nota activa) para poder editarla/completarla sin que la tengan que describir de nuevo. La confirmación al guardar una nota debe ser cortita (ej: "Guardado ✅"), sin explicaciones de más. listar_notas y buscar_nota no muestran las completadas por defecto — si el usuario quiere verlas, pasá incluir_completadas=true.
+
+REPORTES Y NEGOCIO:
+- Reconocé preguntas casuales como "¿cómo ando?", "¿cómo viene el mes?", "¿cómo va mi negocio?" como pedidos de reporte, no hace falta que usen la palabra "reporte".
+- Si la pregunta es amplia y no específica, usá consultar_negocio_completo en vez de hacerle elegir entre varios reportes.
+- Por defecto, respondé en texto corto y directo (3-5 líneas con lo esencial). Generá PDF solo si el usuario lo pide explícitamente ("mandámelo en pdf", "expórtalo").
+- Cuando dés una comparación entre períodos, acompañá el número con una palabra clara (mejor, peor, similar), no solo el porcentaje.
+- Priorizá mostrar primero cualquier alerta relevante (deudas viejas, presupuestos por vencer) antes que los números generales, si hay algo urgente.
+- Reconocé períodos hablados naturalmente ("el mes pasado", "este trimestre", "este año") calculando vos la fecha correspondiente.
+- Mantené el foco en qué tipo de reporte se está hablando en la charla (reporte activo), para entender preguntas de seguimiento como "¿y el mes pasado?" sin que reformulen todo.
+
+FOTOS, AUDIO Y DOCUMENTOS:
+- Si el usuario manda una foto/audio/documento sin instrucción clara, decidí vos qué hacer según el contexto reciente de la charla (si se estaba hablando de un cliente puntual, es lo más probable que sea para él) — no preguntes "¿qué hago con esto?" salvo que sea genuinamente ambiguo.
+- Si una foto es claramente un ticket o comprobante de compra, leé el monto vos mismo de la imagen y usá registrar_gasto_desde_ticket, sin pedirle al usuario que te dicte el número.
+- Si una foto muestra la chapita/etiqueta de un equipo con marca, modelo o número de serie visible, leelos vos y usá editar_equipo para cargarlos, en vez de preguntarle al usuario.
+- Si es un documento largo, dale un resumen de 2-3 líneas con lo más importante, no le repitas todo el texto.
+- La confirmación al guardar una foto/audio/documento debe ser cortita, sin explicaciones de más.
+
 AGENDA Y VISITAS (agendar_trabajo, no crear_recordatorio, cuando sea una visita a un cliente en fecha/hora concretas):
 - Al agendar, preguntá o asumí un aviso previo razonable (ej: 2 horas antes) si el usuario no lo aclara, pero dejá que él lo elija si quiere ("avisame el día anterior", "avisame 3 horas antes").
 - Cuando el usuario diga que terminó un trabajo agendado, usá completar_visita — y ofrecele registrar el trabajo realizado y/o generar el recibo en el mismo intercambio.
@@ -379,12 +397,42 @@ const HERRAMIENTAS = [
       },
       {
         name: 'guardar_foto',
-        description: 'Guarda una foto adjunta ligada a un cliente y/o a su presupuesto activo (queda disponible para siempre, no solo para esta charla).',
+        description: 'Guarda la última foto adjunta ligada a un cliente y/o a su presupuesto activo (queda disponible para siempre). Si el usuario menciona que es de "antes", "después", "firma" o "ticket/comprobante", asignale esa etiqueta.',
         parameters: {
           type: 'OBJECT',
-          properties: { cliente_id: CID, cliente_nombre: CNOM, descripcion: { type: 'STRING' } },
+          properties: {
+            cliente_id: CID,
+            cliente_nombre: CNOM,
+            descripcion: { type: 'STRING' },
+            etiqueta: { type: 'STRING', description: "'antes', 'despues', 'firma', 'ticket', o vacío si es general." },
+          },
           required: ['cliente_nombre'],
         },
+      },
+      {
+        name: 'ver_fotos_cliente',
+        description: 'Muestra la galería de fotos guardadas de un cliente.',
+        parameters: { type: 'OBJECT', properties: { cliente_id: CID, cliente_nombre: CNOM }, required: ['cliente_nombre'] },
+      },
+      {
+        name: 'guardar_documento_cliente',
+        description: 'Guarda el último documento adjunto (PDF, etc.) de forma permanente, ligado a un cliente.',
+        parameters: { type: 'OBJECT', properties: { cliente_id: CID, cliente_nombre: CNOM, resumen: { type: 'STRING', description: 'Resumen corto de qué es el documento.' } }, required: ['cliente_nombre'] },
+      },
+      {
+        name: 'guardar_audio_nota',
+        description: 'Guarda el último audio recibido (el archivo original, no solo su transcripción) ligado a un cliente.',
+        parameters: { type: 'OBJECT', properties: { cliente_id: CID, cliente_nombre: CNOM }, required: ['cliente_nombre'] },
+      },
+      {
+        name: 'registrar_gasto_desde_ticket',
+        description: 'Cuando el usuario manda la foto de un ticket/factura y pide anotar el gasto, extraé vos el monto de la imagen y registralo como gasto de materiales del último trabajo del cliente.',
+        parameters: { type: 'OBJECT', properties: { cliente_id: CID, cliente_nombre: CNOM, monto: { type: 'NUMBER', description: 'Monto que leíste en la foto del ticket.' } }, required: ['cliente_nombre', 'monto'] },
+      },
+      {
+        name: 'listar_archivos_recientes',
+        description: 'Lista las últimas fotos guardadas en general.',
+        parameters: { type: 'OBJECT', properties: {} },
       },
       {
         name: 'consultar_rentabilidad',
@@ -762,15 +810,75 @@ const HERRAMIENTAS = [
       // ---- NOTAS ----
       {
         name: 'guardar_nota',
-        description: 'Guarda una nota o lista libre (ej: lista de materiales) sin ligar a un cliente.',
-        parameters: { type: 'OBJECT', properties: { titulo: { type: 'STRING' }, contenido: { type: 'STRING' } }, required: ['contenido'] },
+        description: 'Guarda una nota o lista libre (ej: lista de materiales, un apunte). Se guarda directo, sin pedir más datos de los que el usuario dio.',
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            titulo: { type: 'STRING' },
+            contenido: { type: 'STRING' },
+            categoria: { type: 'STRING', description: 'Si es evidente por el contenido (ej: "compras"), asignala vos sin preguntar.' },
+            cliente_nombre: { type: 'STRING', description: 'Si la nota es sobre un cliente puntual (ej: mientras se habla de una visita), ligala a él.' },
+            prioridad: { type: 'STRING', description: "'urgente', 'normal' o 'baja'. Por defecto normal." },
+            fijar: { type: 'BOOLEAN', description: 'true si el usuario pide destacarla/fijarla.' },
+          },
+          required: ['contenido'],
+        },
       },
-      { name: 'buscar_nota', description: 'Busca una nota guardada.', parameters: { type: 'OBJECT', properties: { busqueda: { type: 'STRING' } }, required: ['busqueda'] } },
-      { name: 'listar_notas', description: 'Lista las notas más recientes guardadas.', parameters: { type: 'OBJECT', properties: {} } },
+      {
+        name: 'editar_nota',
+        description: 'Corrige el contenido de una nota existente. Si el usuario dice "la última nota" o no aclara cuál, usa la más reciente.',
+        parameters: { type: 'OBJECT', properties: { busqueda: { type: 'STRING' }, nuevo_contenido: { type: 'STRING' } }, required: ['nuevo_contenido'] },
+      },
+      { name: 'buscar_nota', description: 'Busca una nota guardada por palabra clave.', parameters: { type: 'OBJECT', properties: { busqueda: { type: 'STRING' } }, required: ['busqueda'] } },
+      {
+        name: 'listar_notas',
+        description: 'Lista las notas activas (no completadas). Por defecto no muestra las ya tildadas como hechas.',
+        parameters: { type: 'OBJECT', properties: { incluir_completadas: { type: 'BOOLEAN' } } },
+      },
+      {
+        name: 'consultar_notas_por_categoria',
+        description: 'Lista notas de una categoría puntual (ej: compras, ideas).',
+        parameters: { type: 'OBJECT', properties: { categoria: { type: 'STRING' } }, required: ['categoria'] },
+      },
+      {
+        name: 'consultar_notas_por_fecha',
+        description: "Lista notas de un rango de fechas. rango: 'hoy', 'semana', 'mes'.",
+        parameters: { type: 'OBJECT', properties: { rango: { type: 'STRING' } } },
+      },
+      {
+        name: 'marcar_nota_completada',
+        description: 'Marca una nota como hecha/completada (no la borra).',
+        parameters: { type: 'OBJECT', properties: { busqueda: { type: 'STRING' } }, required: ['busqueda'] },
+      },
+      {
+        name: 'marcar_nota_fijada',
+        description: 'Fija o desfija una nota para que aparezca destacada primero.',
+        parameters: { type: 'OBJECT', properties: { busqueda: { type: 'STRING' }, fijar: { type: 'BOOLEAN' } }, required: ['busqueda', 'fijar'] },
+      },
+      {
+        name: 'guardar_foto_nota',
+        description: 'Adjunta la última foto enviada a una nota.',
+        parameters: { type: 'OBJECT', properties: { busqueda: { type: 'STRING' } }, required: ['busqueda'] },
+      },
+      {
+        name: 'combinar_notas',
+        description: 'Une dos notas relacionadas en una sola.',
+        parameters: { type: 'OBJECT', properties: { busqueda_principal: { type: 'STRING' }, busqueda_a_sumar: { type: 'STRING' } }, required: ['busqueda_principal', 'busqueda_a_sumar'] },
+      },
+      {
+        name: 'exportar_nota_pdf',
+        description: 'Genera un PDF de una nota para compartir fuera del chat.',
+        parameters: { type: 'OBJECT', properties: { busqueda: { type: 'STRING' } }, required: ['busqueda'] },
+      },
       {
         name: 'eliminar_nota',
         description: 'Borra una nota, buscándola por su contenido o título. SOLO tras confirmación.',
         parameters: { type: 'OBJECT', properties: { busqueda: { type: 'STRING' } }, required: ['busqueda'] },
+      },
+      {
+        name: 'eliminar_notas_completadas',
+        description: 'Borra todas las notas ya marcadas como completadas de una vez. SOLO tras confirmación.',
+        parameters: { type: 'OBJECT', properties: {} },
       },
 
       // ---- DOCUMENTOS Y REPORTES ----
@@ -791,8 +899,68 @@ const HERRAMIENTAS = [
       },
       {
         name: 'consultar_reporte_mensual',
-        description: 'Muestra un resumen de facturación del mes (facturado, cobrado, pendiente).',
+        description: 'Muestra un resumen de facturación del mes (facturado, cobrado, pendiente). Por defecto respuesta corta en texto, no PDF.',
         parameters: { type: 'OBJECT', properties: { mes_iso: { type: 'STRING' } } },
+      },
+      {
+        name: 'comparar_meses',
+        description: "Compara la facturación de un mes contra el anterior. Reconocé 'este mes', 'el mes pasado', etc.",
+        parameters: { type: 'OBJECT', properties: { mes_iso: { type: 'STRING' } } },
+      },
+      {
+        name: 'consultar_reporte_anual',
+        description: 'Reporte completo de un año (facturado, cobrado, pendiente).',
+        parameters: { type: 'OBJECT', properties: { anio: { type: 'STRING' } } },
+      },
+      {
+        name: 'exportar_reporte_anual',
+        description: 'Genera un PDF con el reporte anual completo, listo para el contador.',
+        parameters: { type: 'OBJECT', properties: { anio: { type: 'STRING' } } },
+      },
+      {
+        name: 'consultar_ranking_clientes',
+        description: 'Lista los clientes que más te facturaron en un período.',
+        parameters: { type: 'OBJECT', properties: { mes_iso: { type: 'STRING' } } },
+      },
+      {
+        name: 'consultar_rentabilidad_general',
+        description: 'Ganancia neta del negocio en un período (facturado menos gastos en materiales), no de un solo trabajo.',
+        parameters: { type: 'OBJECT', properties: { mes_iso: { type: 'STRING' } } },
+      },
+      {
+        name: 'consultar_proyeccion_cierre',
+        description: 'Proyecta cómo vas a terminar el mes según el ritmo actual de facturación.',
+        parameters: { type: 'OBJECT', properties: { mes_iso: { type: 'STRING' } } },
+      },
+      {
+        name: 'consultar_grafico_facturacion',
+        description: 'Muestra un gráfico simple (de texto) de la facturación de los últimos meses.',
+        parameters: { type: 'OBJECT', properties: { cantidad_meses: { type: 'NUMBER' } } },
+      },
+      {
+        name: 'consultar_facturacion_por_categoria',
+        description: 'Reporte de facturación separado por categoría de cliente (si el usuario las usa).',
+        parameters: { type: 'OBJECT', properties: { mes_iso: { type: 'STRING' } } },
+      },
+      {
+        name: 'consultar_facturacion_por_rubro',
+        description: 'Reporte de facturación separado por rubro de trabajo (plomería, gas, electricidad, etc), si los trabajos tienen rubro cargado.',
+        parameters: { type: 'OBJECT', properties: { mes_iso: { type: 'STRING' } } },
+      },
+      {
+        name: 'consultar_clientes_nuevos_vs_recurrentes',
+        description: 'Cuántos clientes nuevos versus ya existentes facturaste en un período.',
+        parameters: { type: 'OBJECT', properties: { mes_iso: { type: 'STRING' } } },
+      },
+      {
+        name: 'consultar_tiempo_cierre_venta',
+        description: 'Tiempo promedio entre que se manda un presupuesto y el cliente lo acepta.',
+        parameters: { type: 'OBJECT', properties: {} },
+      },
+      {
+        name: 'consultar_negocio_completo',
+        description: 'Resumen ejecutivo de todo el negocio en una sola vista: facturación, pendientes, mejores clientes, y alertas relevantes. Usar cuando el usuario pregunta algo amplio como "cómo va mi negocio" o "cómo ando".',
+        parameters: { type: 'OBJECT', properties: {} },
       },
     ],
   },
