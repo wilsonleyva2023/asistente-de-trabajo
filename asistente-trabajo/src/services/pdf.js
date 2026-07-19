@@ -274,4 +274,49 @@ async function generarAgendaPdf({ titulo, dias }) {
   });
 }
 
-module.exports = { generarRecibo, generarPresupuesto, generarDocumentoLibre, generarExtracto, generarBitacora, generarAgendaPdf };
+function formatoICS(fecha) {
+  return new Date(fecha).toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
+}
+
+function generarICS(visitas) {
+  let contenido = 'BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Asistente de Trabajo//ES\r\n';
+  (visitas || []).forEach((v) => {
+    const inicio = new Date(v.fecha_hora);
+    const fin = new Date(inicio.getTime() + (v.duracion_minutos || 60) * 60000);
+    contenido += 'BEGIN:VEVENT\r\n';
+    contenido += `UID:${v.id}@asistente-trabajo\r\n`;
+    contenido += `DTSTART:${formatoICS(inicio)}\r\n`;
+    contenido += `DTEND:${formatoICS(fin)}\r\n`;
+    contenido += `SUMMARY:${v.clientes?.nombre || 'Cliente'} - ${v.descripcion}\r\n`;
+    if (v.clientes?.direccion) contenido += `LOCATION:${v.clientes.direccion}\r\n`;
+    contenido += 'END:VEVENT\r\n';
+  });
+  contenido += 'END:VCALENDAR\r\n';
+  return Buffer.from(contenido, 'utf-8');
+}
+
+async function generarFichaEquipo({ cliente, equipo }) {
+  return generarPDFBuffer((doc) => {
+    let y = encabezado(doc, 'Ficha Técnica', '—', new Date().toLocaleDateString('es-AR'));
+    y = datosCliente(doc, y, cliente);
+    y += 6;
+    const campos = [
+      ['Tipo de equipo', equipo.tipo],
+      ['Marca', equipo.marca || '—'],
+      ['Modelo', equipo.modelo || '—'],
+      ['N° de serie', equipo.numero_serie || '—'],
+      ['Fecha de instalación', equipo.fecha_instalacion],
+      ['Garantía de fábrica hasta', equipo.garantia_fabrica_vencimiento || '—'],
+      ['Próximo mantenimiento', equipo.proximo_mantenimiento || '—'],
+    ];
+    doc.fontSize(10);
+    campos.forEach(([label, valor]) => {
+      doc.fillColor(DORADO).font('Helvetica-Bold').text(`${label}: `, 30, y, { continued: true });
+      doc.fillColor(NEGRO).font('Helvetica').text(String(valor));
+      y = doc.y + 6;
+    });
+    piePagina(doc);
+  });
+}
+
+module.exports = { generarRecibo, generarPresupuesto, generarDocumentoLibre, generarExtracto, generarBitacora, generarAgendaPdf, generarICS, generarFichaEquipo };
