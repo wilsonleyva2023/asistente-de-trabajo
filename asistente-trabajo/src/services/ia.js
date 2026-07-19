@@ -33,6 +33,13 @@ PRESUPUESTOS:
 
 RECIBOS: si falta concepto o monto, y el cliente tiene un presupuesto activo, usá sus datos automáticamente. Al generar un recibo, la deuda pendiente correspondiente se salda sola.
 
+COBROS Y PAGOS (fluidez):
+- Si el usuario dice que un cliente "pagó todo" o el monto coincide con lo pendiente, cerrá la deuda directo sin pedirle que confirme el monto de nuevo.
+- No pidas confirmación para registrar un pago que el usuario ya te contó que pasó — la confirmación es solo para borrar cosas o para montos que parezcan un error de tipeo.
+- Si no te aclaran de qué cobro hablan, asumí que es el más reciente del cliente activo de la charla.
+- Cuando el usuario marque un trabajo como terminado (completar_visita), preguntale de una si ya le cobró, en la misma respuesta.
+- Si te piden "cobrale y hacele el recibo" en un mismo pedido, encadená las dos herramientas vos mismo, no le pidas que lo repita en dos mensajes.
+
 TRABAJOS: registrar_trabajo puede incluir el gasto real en materiales (para saber la ganancia neta) y queda con garantía de 90 días por defecto (se puede cambiar).
 
 AGENDA Y VISITAS (agendar_trabajo, no crear_recordatorio, cuando sea una visita a un cliente en fecha/hora concretas):
@@ -43,6 +50,14 @@ AGENDA Y VISITAS (agendar_trabajo, no crear_recordatorio, cuando sea una visita 
 - Si el usuario pregunta por un día puntual que no es "hoy" ni "mañana" (ej: "el jueves", "el 25 de julio", "el lunes que viene"), calculá vos la fecha real usando la fecha de hoy como referencia, y pasala como fecha_iso en formato YYYY-MM-DD a consultar_agenda o consultar_recordatorios.
 - consultar_agenda y consultar_recordatorios te devuelven los datos en crudo (no los mandan al chat ellos solos) — con esos datos armá VOS la respuesta final, organizada por día, clara y fácil de leer, mencionando el presupuesto de cada visita si lo tiene, y la dirección si dos visitas del mismo día quedan en zonas muy distintas (avisale al usuario para que lo tenga en cuenta, sin calcular distancia exacta). Si el usuario no aclaró el rango, o pide "mi agenda" en general, usá "semana" por defecto (no "hoy"), y llamá tanto a consultar_agenda como a consultar_recordatorios para no dejar nada afuera.
 - Al usar agendar_trabajo, si el resultado indica que ese día ya tiene varias visitas (4 o más), avisale al usuario que el día está cargado.
+- Si el usuario pide algo relacionado con el presupuesto activo (agregarle, sacarle, mandarlo en pdf) sin repetir el nombre del cliente, asumí que se refiere al último presupuesto del que se habló en la charla.
+- Si el usuario te da TODOS los datos de un presupuesto en un solo mensaje (cliente, ítems, y si quiere el pdf), hacelo todo junto sin preguntar de a un dato por vez.
+- Un mensaje de audio largo con todos los datos también se procesa todo junto, igual que el texto.
+- No pidas confirmación para cambios chicos y reversibles (agregar un ítem, corregir un monto). Pedí confirmación SOLO para borrar algo o para cambios grandes.
+- Si el usuario menciona que cobró algo, aunque no diga la palabra "recibo", interpretalo como que quiere generar un recibo (usá crear_recibo).
+- Si te pegan una respuesta que parece ser de un cliente aceptando (ej: "dale, acepto", "va bien", "dale dale"), interpretalo como que ese cliente aceptó su presupuesto activo, y usá cambiar_estado_presupuesto.
+- Si el usuario pide deshacer lo último que hizo, usá deshacer_ultima_accion.
+- El modo rápido (activar_modo_rapido) hace que, mientras esté activo, tus confirmaciones sean de una sola línea corta, sin explicaciones extra — mantenelo así hasta que lo desactiven.
 - Usá consultar_dias_libres si el usuario pregunta qué día tiene libre para ofrecerle a un cliente nuevo.
 - Usá contar_visitas_cliente si preguntan si un cliente es frecuente o cuántas veces lo visitaron.
 - Usá consultar_reagendados_frecuentes si preguntan por clientes problemáticos con la agenda.
@@ -207,6 +222,7 @@ const HERRAMIENTAS = [
             cliente_nombre: CNOM,
             items: { type: 'ARRAY', items: ITEM_SCHEMA },
             generar_pdf: { type: 'BOOLEAN' },
+            dias_validez: { type: 'NUMBER', description: 'Días de validez del presupuesto, si el usuario pide algo distinto a 15.' },
             direccion_trabajo: { type: 'STRING' },
             alcance_texto: { type: 'STRING' },
             incluir_alcance: { type: 'BOOLEAN' },
@@ -296,19 +312,115 @@ const HERRAMIENTAS = [
         parameters: { type: 'OBJECT', properties: {} },
       },
 
+      {
+        name: 'guardar_plantilla_presupuesto',
+        description: 'Guarda un presupuesto (o sus ítems) como plantilla reutilizable con un nombre.',
+        parameters: { type: 'OBJECT', properties: { nombre_plantilla: { type: 'STRING' }, items: { type: 'ARRAY', items: ITEM_SCHEMA } }, required: ['nombre_plantilla', 'items'] },
+      },
+      {
+        name: 'crear_presupuesto_desde_plantilla',
+        description: 'Crea un presupuesto para un cliente usando una plantilla guardada.',
+        parameters: {
+          type: 'OBJECT',
+          properties: { cliente_id: CID, cliente_nombre: CNOM, nombre_plantilla: { type: 'STRING' }, generar_pdf: { type: 'BOOLEAN' } },
+          required: ['cliente_nombre', 'nombre_plantilla'],
+        },
+      },
+      {
+        name: 'repetir_presupuesto',
+        description: 'Crea un presupuesto nuevo para un cliente, usando como base su último presupuesto (mismos ítems, con los cambios que pida el usuario).',
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            cliente_id: CID,
+            cliente_nombre: CNOM,
+            nuevo_monto_total: { type: 'NUMBER', description: 'Si el usuario pide un monto total distinto, en vez de mantener los montos originales.' },
+            generar_pdf: { type: 'BOOLEAN' },
+          },
+          required: ['cliente_nombre'],
+        },
+      },
+      {
+        name: 'crear_presupuestos_lote',
+        description: 'Crea el mismo presupuesto (mismos ítems) para varios clientes distintos en un solo pedido.',
+        parameters: {
+          type: 'OBJECT',
+          properties: { nombres_clientes: { type: 'ARRAY', items: { type: 'STRING' } }, items: { type: 'ARRAY', items: ITEM_SCHEMA } },
+          required: ['nombres_clientes', 'items'],
+        },
+      },
+      {
+        name: 'deshacer_ultima_accion',
+        description: 'Deshace la última acción de crear/editar/borrar que se hizo en esta charla, si es posible.',
+        parameters: { type: 'OBJECT', properties: {} },
+      },
+      {
+        name: 'contar_presupuestos_hoy',
+        description: 'Dice cuántos presupuestos y recibos se generaron hoy.',
+        parameters: { type: 'OBJECT', properties: {} },
+      },
+      {
+        name: 'consultar_historial_presupuesto',
+        description: 'Muestra el historial de cambios (creación, ítems agregados/quitados, cambios de estado) del presupuesto activo de un cliente.',
+        parameters: { type: 'OBJECT', properties: { cliente_id: CID, cliente_nombre: CNOM }, required: ['cliente_nombre'] },
+      },
+      {
+        name: 'exportar_mes_presupuestos',
+        description: "Genera un PDF con todos los presupuestos/recibos de un mes. mes_iso formato 'YYYY-MM', si no se da usa el mes actual.",
+        parameters: { type: 'OBJECT', properties: { mes_iso: { type: 'STRING' } } },
+      },
+      {
+        name: 'guardar_foto',
+        description: 'Guarda una foto adjunta ligada a un cliente y/o a su presupuesto activo (queda disponible para siempre, no solo para esta charla).',
+        parameters: {
+          type: 'OBJECT',
+          properties: { cliente_id: CID, cliente_nombre: CNOM, descripcion: { type: 'STRING' } },
+          required: ['cliente_nombre'],
+        },
+      },
+      {
+        name: 'consultar_rentabilidad',
+        description: 'Dice cuánto ganó realmente en el último trabajo de un cliente (cobrado menos gasto en materiales).',
+        parameters: { type: 'OBJECT', properties: { cliente_id: CID, cliente_nombre: CNOM }, required: ['cliente_nombre'] },
+      },
+      {
+        name: 'consultar_tasa_conversion',
+        description: 'Dice qué porcentaje de los presupuestos de un mes se convirtieron en trabajo aceptado.',
+        parameters: { type: 'OBJECT', properties: { mes_iso: { type: 'STRING' } } },
+      },
+      {
+        name: 'activar_modo_rapido',
+        description: 'Activa o desactiva el modo rápido (respuestas más cortas, con menos explicación) para esta charla.',
+        parameters: { type: 'OBJECT', properties: { activar: { type: 'BOOLEAN' } }, required: ['activar'] },
+      },
+
       // ---- RECIBOS ----
       {
         name: 'crear_recibo',
-        description: 'Genera un recibo de pago en PDF. Si falta concepto/monto, usa el presupuesto activo del cliente. Salda la deuda asociada.',
-        parameters: { type: 'OBJECT', properties: { cliente_id: CID, cliente_nombre: CNOM, concepto: { type: 'STRING' }, monto: { type: 'NUMBER' } }, required: ['cliente_nombre'] },
+        description: 'Genera un recibo de pago en PDF. Si falta concepto/monto, usa el presupuesto activo del cliente. Salda (o reduce) la deuda asociada.',
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            cliente_id: CID,
+            cliente_nombre: CNOM,
+            concepto: { type: 'STRING' },
+            monto: { type: 'NUMBER' },
+            es_pago_parcial: { type: 'BOOLEAN', description: 'true si el monto es solo una parte de lo que debe, no el total.' },
+          },
+          required: ['cliente_nombre'],
+        },
       },
 
       // ---- COBROS / DEUDAS ----
       { name: 'consultar_pendientes', description: 'Muestra los cobros pendientes.', parameters: { type: 'OBJECT', properties: {} } },
       {
         name: 'registrar_pago_parcial',
-        description: 'Registra un pago parcial sobre la deuda pendiente de un cliente.',
-        parameters: { type: 'OBJECT', properties: { cliente_id: CID, cliente_nombre: CNOM, monto: { type: 'NUMBER' } }, required: ['cliente_nombre', 'monto'] },
+        description: 'Registra un pago (parcial o completo) sobre la deuda pendiente de un cliente. Si el monto coincide con lo pendiente, la deuda queda saldada sola.',
+        parameters: {
+          type: 'OBJECT',
+          properties: { cliente_id: CID, cliente_nombre: CNOM, monto: { type: 'NUMBER' }, metodo_pago: { type: 'STRING', description: "'efectivo', 'transferencia', 'tarjeta', etc." } },
+          required: ['cliente_nombre', 'monto'],
+        },
       },
       {
         name: 'eliminar_cobro',
@@ -319,6 +431,74 @@ const HERRAMIENTAS = [
         name: 'restaurar_cobro',
         description: 'Recupera la última deuda borrada temporalmente de un cliente.',
         parameters: { type: 'OBJECT', properties: { cliente_nombre: CNOM }, required: ['cliente_nombre'] },
+      },
+      {
+        name: 'consultar_historial_pagos',
+        description: 'Muestra todos los pagos que hizo un cliente históricamente (no solo la deuda activa).',
+        parameters: { type: 'OBJECT', properties: { cliente_id: CID, cliente_nombre: CNOM }, required: ['cliente_nombre'] },
+      },
+      {
+        name: 'crear_plan_cuotas',
+        description: 'Divide la deuda activa de un cliente en cuotas mensuales.',
+        parameters: {
+          type: 'OBJECT',
+          properties: { cliente_id: CID, cliente_nombre: CNOM, cantidad_cuotas: { type: 'NUMBER' }, primera_fecha_iso: { type: 'STRING' } },
+          required: ['cliente_nombre', 'cantidad_cuotas'],
+        },
+      },
+      {
+        name: 'pagar_cuota',
+        description: 'Marca como pagada una cuota puntual del plan de pagos de un cliente.',
+        parameters: { type: 'OBJECT', properties: { cliente_id: CID, cliente_nombre: CNOM, numero_cuota: { type: 'NUMBER' } }, required: ['cliente_nombre', 'numero_cuota'] },
+      },
+      {
+        name: 'aplicar_recargo',
+        description: 'Aplica un recargo porcentual a la deuda vencida de un cliente.',
+        parameters: { type: 'OBJECT', properties: { cliente_id: CID, cliente_nombre: CNOM, porcentaje: { type: 'NUMBER' } }, required: ['cliente_nombre', 'porcentaje'] },
+      },
+      {
+        name: 'aplicar_descuento_pronto_pago',
+        description: 'Ofrece un descuento si el cliente paga antes de una fecha.',
+        parameters: {
+          type: 'OBJECT',
+          properties: { cliente_id: CID, cliente_nombre: CNOM, porcentaje: { type: 'NUMBER' }, fecha_limite_iso: { type: 'STRING' } },
+          required: ['cliente_nombre', 'porcentaje', 'fecha_limite_iso'],
+        },
+      },
+      {
+        name: 'guardar_comprobante_pago',
+        description: 'Guarda la foto de un comprobante de pago (transferencia, etc.) ligada a la deuda activa de un cliente.',
+        parameters: { type: 'OBJECT', properties: { cliente_id: CID, cliente_nombre: CNOM }, required: ['cliente_nombre'] },
+      },
+      {
+        name: 'consultar_deudas_por_antiguedad',
+        description: 'Agrupa las deudas pendientes por qué tan vencidas están (recientes, 30+, 60+ días), para priorizar el reclamo.',
+        parameters: { type: 'OBJECT', properties: {} },
+      },
+      {
+        name: 'consultar_estado_caja',
+        description: 'Da un resumen financiero completo de un vistazo: pendiente total, cobrado hoy, y proyección de ingresos.',
+        parameters: { type: 'OBJECT', properties: {} },
+      },
+      {
+        name: 'consultar_reporte_metodo_pago',
+        description: "Muestra cuánto cobraste por cada método de pago (efectivo, transferencia, etc.) en un período. mes_iso formato 'YYYY-MM', si no se da usa el mes actual.",
+        parameters: { type: 'OBJECT', properties: { mes_iso: { type: 'STRING' } } },
+      },
+      {
+        name: 'generar_mensaje_reclamo',
+        description: 'Genera un mensaje pre-armado y respetuoso para reclamarle a un cliente una deuda vencida.',
+        parameters: { type: 'OBJECT', properties: { cliente_id: CID, cliente_nombre: CNOM }, required: ['cliente_nombre'] },
+      },
+      {
+        name: 'exportar_cobros_mes',
+        description: "Genera un documento con el resumen de cobros de un mes, listo para el contador/monotributo. mes_iso formato 'YYYY-MM'.",
+        parameters: { type: 'OBJECT', properties: { mes_iso: { type: 'STRING' } } },
+      },
+      {
+        name: 'consultar_puntualidad_cliente',
+        description: 'Dice qué tan puntual es un cliente pagando (cuántas veces pagó a tiempo vs. tarde).',
+        parameters: { type: 'OBJECT', properties: { cliente_id: CID, cliente_nombre: CNOM }, required: ['cliente_nombre'] },
       },
       { name: 'consultar_recontactar', description: 'Presupuestos sin cerrar para recontactar al cliente.', parameters: { type: 'OBJECT', properties: {} } },
 
