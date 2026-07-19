@@ -20,6 +20,10 @@ CLIENTES CON EL MISMO NOMBRE:
 - MANTENÉ EL FOCO: una vez que quedó claro de qué cliente se habla, seguí hablando de ESE MISMO en los mensajes siguientes, no lo mezcles con otro de nombre parecido. Solo cambiás si el usuario nombra a otro cliente explícitamente.
 - Si el usuario corrige un dato mal cargado (ej: "es Berisso, no Berizo"), usá editar_cliente sobre el existente. NUNCA crees un cliente nuevo para una corrección.
 - Cuando acciones sobre un presupuesto YA EXISTENTE (reenviar, editar, borrar, ítems), el sistema ya filtra a los clientes con presupuesto activo — no preguntes por los que no tienen.
+- Las categorías de cliente las define el usuario libremente (no hay una lista fija) — usá exactamente la palabra que él use.
+- Si el usuario no aclara de qué cliente habla en un mensaje (ej: "agregale el teléfono"), y en la charla reciente quedó claro de quién se trataba, asumí que sigue siendo ese mismo cliente.
+- Antes de crear un cliente nuevo, si buscar_cliente (u otra búsqueda) encuentra a alguien con un nombre muy parecido, preguntale al usuario si es la misma persona antes de crear uno nuevo, para evitar duplicados.
+- Para "mostrame a Fulano" sin más contexto, dá un resumen corto (2-3 líneas: contacto, deuda, último trabajo). Si el usuario pide "toda la ficha" o "el detalle completo", ahí sí mostrá todo.
 
 PRESUPUESTOS:
 - Pueden tener varios ítems. Si te dan varias cosas en un pedido, cargalas como ítems separados.
@@ -79,7 +83,7 @@ const HERRAMIENTAS = [
       },
       {
         name: 'crear_cliente',
-        description: 'Da de alta un cliente nuevo.',
+        description: 'Da de alta un cliente nuevo. Alcanza con el nombre, el resto es opcional y se puede completar después.',
         parameters: {
           type: 'OBJECT',
           properties: {
@@ -89,13 +93,19 @@ const HERRAMIENTAS = [
             notas: { type: 'STRING' },
             apodo: { type: 'STRING', description: 'Referencia para distinguirlo si hay otro con el mismo nombre.' },
             referido_por: { type: 'STRING', description: 'Quién lo recomendó, si el usuario lo menciona.' },
+            categoria: { type: 'STRING', description: 'Categoría libre que el usuario defina (ej: arquitecto, administrador de consorcio, comercio, cliente pudiente).' },
+            cumpleanos_iso: { type: 'STRING', description: 'Fecha de cumpleaños en formato YYYY-MM-DD, si la menciona.' },
+            horario_preferido: { type: 'STRING' },
+            relacion: { type: 'STRING', description: 'Relación con otro cliente si la menciona (ej: "padre de Jennifer").' },
+            descuento_habitual: { type: 'NUMBER', description: 'Porcentaje de descuento habitual, si lo menciona.' },
+            contacto_secundario: { type: 'STRING', description: 'Otro contacto del mismo cliente (ej: encargado, familiar), nombre y teléfono.' },
           },
           required: ['nombre'],
         },
       },
       {
         name: 'editar_cliente',
-        description: 'Corrige datos de un cliente ya cargado.',
+        description: 'Corrige o completa datos de un cliente ya cargado, incluyendo categoría, prioridad, bloqueo, cumpleaños, etc.',
         parameters: {
           type: 'OBJECT',
           properties: {
@@ -106,6 +116,14 @@ const HERRAMIENTAS = [
             nueva_direccion: { type: 'STRING' },
             nuevo_apodo: { type: 'STRING' },
             nuevas_notas: { type: 'STRING' },
+            nueva_categoria: { type: 'STRING' },
+            prioritario: { type: 'BOOLEAN', description: 'true para marcarlo como cliente VIP/de confianza.' },
+            bloqueado: { type: 'BOOLEAN', description: 'true para marcarlo como "no volver a atender".' },
+            cumpleanos_iso: { type: 'STRING' },
+            nuevo_horario_preferido: { type: 'STRING' },
+            nueva_relacion: { type: 'STRING' },
+            nuevo_descuento_habitual: { type: 'NUMBER' },
+            nuevo_contacto_secundario: { type: 'STRING' },
           },
           required: ['cliente_nombre'],
         },
@@ -119,6 +137,63 @@ const HERRAMIENTAS = [
         name: 'restaurar_cliente',
         description: 'Recupera el último cliente borrado temporalmente que coincida con el nombre.',
         parameters: { type: 'OBJECT', properties: { cliente_nombre: CNOM }, required: ['cliente_nombre'] },
+      },
+      {
+        name: 'buscar_clientes_por_categoria',
+        description: 'Lista los clientes de una categoría (la que el usuario haya definido, ej: arquitectos, comercios).',
+        parameters: { type: 'OBJECT', properties: { categoria: { type: 'STRING' } }, required: ['categoria'] },
+      },
+      {
+        name: 'buscar_cliente_por_telefono',
+        description: 'Busca qué cliente corresponde a un número de teléfono.',
+        parameters: { type: 'OBJECT', properties: { telefono: { type: 'STRING' } }, required: ['telefono'] },
+      },
+      {
+        name: 'listar_clientes_recientes',
+        description: 'Lista los clientes más recientes/activos, para acceso rápido sin buscar por nombre.',
+        parameters: { type: 'OBJECT', properties: {} },
+      },
+      {
+        name: 'combinar_clientes',
+        description: 'Une dos clientes duplicados en uno solo (todo el historial del segundo pasa al primero, y el segundo queda borrado).',
+        parameters: {
+          type: 'OBJECT',
+          properties: { nombre_a_conservar: { type: 'STRING' }, nombre_a_fusionar: { type: 'STRING' } },
+          required: ['nombre_a_conservar', 'nombre_a_fusionar'],
+        },
+      },
+      {
+        name: 'agregar_direccion_cliente',
+        description: 'Agrega una dirección adicional a un cliente que tiene más de un lugar (ej: local, depósito).',
+        parameters: {
+          type: 'OBJECT',
+          properties: { cliente_id: CID, cliente_nombre: CNOM, etiqueta: { type: 'STRING' }, direccion: { type: 'STRING' } },
+          required: ['cliente_nombre', 'direccion'],
+        },
+      },
+      {
+        name: 'registrar_satisfaccion',
+        description: 'Registra si el cliente quedó conforme con el último trabajo realizado.',
+        parameters: {
+          type: 'OBJECT',
+          properties: { cliente_id: CID, cliente_nombre: CNOM, satisfaccion: { type: 'STRING', description: "'conforme', 'neutral' o 'disconforme'." } },
+          required: ['cliente_nombre', 'satisfaccion'],
+        },
+      },
+      {
+        name: 'consultar_clientes_en_silencio',
+        description: 'Lista clientes sin contacto hace varios meses, para retomarlos.',
+        parameters: { type: 'OBJECT', properties: { meses: { type: 'NUMBER' } } },
+      },
+      {
+        name: 'consultar_rechazados_para_reintentar',
+        description: 'Lista presupuestos rechazados hace tiempo, que podría valer la pena reofrecer.',
+        parameters: { type: 'OBJECT', properties: {} },
+      },
+      {
+        name: 'consultar_trabajos_repetidos',
+        description: 'Dice si un cliente tuvo trabajos parecidos repetidos en los últimos meses (posible problema de fondo).',
+        parameters: { type: 'OBJECT', properties: { cliente_id: CID, cliente_nombre: CNOM }, required: ['cliente_nombre'] },
       },
 
       // ---- PRESUPUESTOS ----
