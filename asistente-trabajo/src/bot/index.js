@@ -28,6 +28,7 @@ bot.use((ctx, next) => {
 const TEXTO_AYUDA =
   '¡Hola! 👋 Soy tu asistente de trabajo. Hablame normal, de lo que necesites: cargar un cliente, hacer un presupuesto, agendar una visita, anotar una lista, mandarme una foto o un audio, lo que sea.\n\n' +
   'Escribí /ayuda para ver todo lo que puedo hacer, organizado por categorías. 📋\n\n' +
+  'Comandos rápidos de agenda: /hoy /manana /semana\n\n' +
   '/cancelar - Cancelar lo que estés cargando';
 
 bot.start((ctx) => ctx.reply(TEXTO_AYUDA));
@@ -68,7 +69,21 @@ bot.command('recordatorio', (ctx) => {
 });
 bot.command('pendientes', (ctx) => ejecutarHerramienta(ctx, 'consultar_pendientes', {}));
 bot.command('recontactar', (ctx) => ejecutarHerramienta(ctx, 'consultar_recontactar', {}));
-bot.command('agenda', (ctx) => ejecutarHerramienta(ctx, 'consultar_agenda', { rango: 'hoy' }));
+
+async function agendaRapida(ctx, rango, etiqueta) {
+  const rVisitas = await ejecutarHerramienta(ctx, 'consultar_agenda', { rango });
+  const rRecs = await ejecutarHerramienta(ctx, 'consultar_recordatorios', { rango });
+  if (!rVisitas.visitas.length && !rRecs.recordatorios.length) return ctx.reply(`No tenés nada agendado para ${etiqueta}. 👍`);
+  let msg = `📅 ${etiqueta.charAt(0).toUpperCase() + etiqueta.slice(1)}:\n\n`;
+  rVisitas.visitas.forEach((v) => { msg += `🔧 ${v.hora} - ${v.cliente}: ${v.descripcion}${v.direccion ? ' (' + v.direccion + ')' : ''}\n`; });
+  rRecs.recordatorios.forEach((r) => { msg += `⏰ ${r.hora} - ${r.texto}\n`; });
+  await ctx.reply(msg);
+}
+
+bot.command('agenda', (ctx) => agendaRapida(ctx, 'hoy', 'hoy'));
+bot.command('hoy', (ctx) => agendaRapida(ctx, 'hoy', 'hoy'));
+bot.command('manana', (ctx) => agendaRapida(ctx, 'manana', 'mañana'));
+bot.command('semana', (ctx) => agendaRapida(ctx, 'semana', 'esta semana'));
 
 // ================= ROUTER PRINCIPAL =================
 
@@ -236,7 +251,13 @@ async function resolverClienteConVisita(args) {
   return { cliente, visita };
 }
 
-function rangoFechas(rango) {
+function rangoFechas(rango, fechaEspecifica) {
+  if (fechaEspecifica) {
+    const dia = new Date(fechaEspecifica);
+    const inicio = new Date(dia); inicio.setHours(0, 0, 0, 0);
+    const fin = new Date(dia); fin.setHours(23, 59, 59, 999);
+    return { desde: inicio.toISOString(), hasta: fin.toISOString() };
+  }
   const inicio = new Date();
   inicio.setHours(0, 0, 0, 0);
   const fin = new Date();
@@ -246,6 +267,9 @@ function rangoFechas(rango) {
     fin.setHours(23, 59, 59, 999);
   } else if (rango === 'semana') {
     fin.setDate(fin.getDate() + 7);
+    fin.setHours(23, 59, 59, 999);
+  } else if (rango === 'mes') {
+    fin.setDate(fin.getDate() + 30);
     fin.setHours(23, 59, 59, 999);
   } else {
     fin.setHours(23, 59, 59, 999);
@@ -565,7 +589,14 @@ async function ejecutarHerramienta(ctx, nombre, args) {
       if (fecha < new Date()) return { error: 'Esa fecha ya pasó. Confirmale al usuario la fecha correcta antes de agendar.' };
       const cercanas = await visitas.visitasCercanas(args.fecha_hora_iso, 60);
       const visita = await visitas.crearVisita({ cliente_id: cliente.id, descripcion: args.descripcion, fecha_hora: args.fecha_hora_iso, aviso_horas_antes: args.aviso_horas_antes || 2 });
-      return { ok: true, cliente_id: cliente.id, choque_de_horario: cercanas.length > 0 ? cercanas.map((v) => `${v.clientes?.nombre} a las ${new Date(v.fecha_hora).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}`) : null };
+      const totalDelDia = await visitas.contarVisitasDelDia(args.fecha_hora_iso);
+      return {
+        ok: true,
+        cliente_id: cliente.id,
+        choque_de_horario: cercanas.length > 0 ? cercanas.map((v) => `${v.clientes?.nombre} a las ${new Date(v.fecha_hora).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}`) : null,
+        visitas_ese_dia: totalDelDia,
+        dia_cargado: totalDelDia >= 4,
+      };
     }
     case 'completar_visita': {
       const r = await resolverClienteConVisita(args);
@@ -589,7 +620,7 @@ async function ejecutarHerramienta(ctx, nombre, args) {
     }
     case 'consultar_agenda': {
       const rango = args.rango || 'semana';
-      const { desde, hasta } = rangoFechas(rango);
+      const { desde, hasta } = rangoFechas(rango, args.fecha_iso);
       const lista = await visitas.visitasEnRango(desde, hasta);
       const conPresupuesto = await Promise.all(
         lista.map(async (v) => {
@@ -608,8 +639,45 @@ async function ejecutarHerramienta(ctx, nombre, args) {
     }
 
     // ---- RECORDATORIOS ----
+    case 'consultar_dias_libres': {
+      const rango = args.rango || 'semana';
+      const { desde, hasta } = rangoFechas(rango);
+      const libres = await visitas.diasLibresEnRango(desde, hasta);
+      return { dias_libres: libres };
+    }
+
+    case 'consultar_reagendados_frecuentes': {
+      const lista = await visitas.clientesQueReagendanMucho(2);
+      if (!lista.length) return { cantidad: 0 };
+      return { cantidad: lista.length, clientes: lista.map((v) => ({ nombre: v.clientes?.nombre, veces: v.veces_reagendada })) };
+    }
+
+    case 'contar_visitas_cliente': {
+      const cliente = await resolverCliente(args);
+      if (!cliente) return errorClienteNoEncontrado(args.cliente_nombre);
+      if (cliente.multiple) return errorClienteAmbiguo(cliente.opciones);
+      const veces = await visitas.contarVisitasCliente(cliente.id);
+      return { cliente_id: cliente.id, nombre: cliente.nombre, visitas_ultimo_anio: veces };
+    }
+
+    case 'generar_agenda_pdf': {
+      const rango = args.rango || 'semana';
+      const { desde, hasta } = rangoFechas(rango);
+      const lista = await visitas.visitasEnRango(desde, hasta);
+      const porDia = {};
+      lista.forEach((v) => {
+        const clave = new Date(v.fecha_hora).toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'numeric' });
+        if (!porDia[clave]) porDia[clave] = [];
+        porDia[clave].push({ hora: new Date(v.fecha_hora).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }), texto: `${v.clientes?.nombre}: ${v.descripcion}` });
+      });
+      const dias = Object.keys(porDia).map((etiqueta) => ({ etiqueta, items: porDia[etiqueta] }));
+      const buffer = await pdf.generarAgendaPdf({ titulo: `Agenda - ${rango}`, dias });
+      await enviarDocumentoConReintento(ctx, { source: buffer, filename: `agenda-${rango}.pdf` });
+      return { ok: true };
+    }
+
     case 'crear_recordatorio': {
-      await recordatorios.crearRecordatorio({ texto: args.texto, fecha_hora: args.fecha_hora_iso });
+      await recordatorios.crearRecordatorio({ texto: args.texto, fecha_hora: args.fecha_hora_iso, recurrencia: args.recurrencia || null });
       return { ok: true };
     }
     case 'editar_recordatorio': {
@@ -631,7 +699,7 @@ async function ejecutarHerramienta(ctx, nombre, args) {
 
     case 'consultar_recordatorios': {
       const rango = args.rango || 'semana';
-      const { desde, hasta } = rangoFechas(rango);
+      const { desde, hasta } = rangoFechas(rango, args.fecha_iso);
       const lista = await recordatorios.recordatoriosEnRango(desde, hasta);
       const items = lista.map((r) => ({
         fecha: new Date(r.fecha_hora).toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'numeric' }),
@@ -852,13 +920,24 @@ async function enviarAgendaDelDia(chatId) {
   const visitasHoy = await visitas.visitasEnRango(desde, hasta);
   const recs = await recordatorios.recordatoriosPendientesHoy();
   const mants = await equipos.mantenimientosDelDia();
+  const totalItems = visitasHoy.length + recs.length + mants.length;
+
   let msg = '📅 Agenda de hoy:\n\n';
-  if (!visitasHoy.length && !recs.length && !mants.length) {
+  if (!totalItems) {
     msg += 'No tenés nada pendiente para hoy. 👍';
   } else {
-    visitasHoy.forEach((v) => { msg += `🔧 ${new Date(v.fecha_hora).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })} - ${v.clientes?.nombre}: ${v.descripcion}\n`; });
+    msg += `Tenés ${visitasHoy.length} trabajo(s) agendado(s)${recs.length ? ` y ${recs.length} recordatorio(s)` : ''}.\n\n`;
+    visitasHoy.forEach((v) => { msg += `🔧 ${new Date(v.fecha_hora).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })} - ${v.clientes?.nombre}: ${v.descripcion}${v.clientes?.direccion ? ' (' + v.clientes.direccion + ')' : ''}\n`; });
     recs.forEach((r) => { msg += `⏰ ${new Date(r.fecha_hora).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })} - ${r.texto}\n`; });
     mants.forEach((m) => { msg += `🔧 Mantenimiento: ${m.tipo} de ${m.clientes?.nombre}${m.aviso_automatico ? ' (se le avisa solo)' : ' (contactalo vos)'}\n`; });
+
+    if (visitasHoy.length) {
+      msg += '\n💬 Mensajes listos para confirmarle a cada cliente:\n\n';
+      visitasHoy.forEach((v) => {
+        const hora = new Date(v.fecha_hora).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
+        msg += `Para ${v.clientes?.nombre}${v.clientes?.telefono ? ' (' + v.clientes.telefono + ')' : ''}:\n"Hola ${v.clientes?.nombre}! Te confirmo que hoy paso a las ${hora} para ${v.descripcion}. Cualquier cosa avisame."\n\n`;
+      });
+    }
   }
   await bot.telegram.sendMessage(chatId, msg);
 }
