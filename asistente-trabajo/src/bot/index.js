@@ -11,6 +11,9 @@ const equipos = require('../services/equipos');
 const visitas = require('../services/visitas');
 const recordatorios = require('../services/recordatorios');
 const notas = require('../services/notas');
+const reportes = require('../services/reportes');
+const documentos = require('../services/documentos');
+const audios = require('../services/audios');
 const pdf = require('../services/pdf');
 const ia = require('../services/ia');
 const storage = require('../services/storage');
@@ -99,6 +102,12 @@ bot.command('equipos', async (ctx) => {
   lista.forEach((e) => { msg += `• ${e.tipo} de ${e.clientes?.nombre} (${e.proximo_mantenimiento})\n`; });
   await ctx.reply(msg);
 });
+bot.command('notas', (ctx) => ejecutarHerramienta(ctx, 'listar_notas', {}));
+bot.command('reporte', async (ctx) => {
+  const r = await ejecutarHerramienta(ctx, 'consultar_reporte_mensual', {});
+  await ctx.reply(`📊 Reporte de ${r.mes}:\n\n💰 Facturado: $${r.facturado}\n✅ Cobrado: $${r.cobrado}\n⏳ Pendiente: $${r.pendiente}`);
+});
+bot.command('fotos', (ctx) => ejecutarHerramienta(ctx, 'listar_archivos_recientes', {}));
 
 // ================= ROUTER PRINCIPAL =================
 
@@ -143,6 +152,8 @@ bot.on('voice', async (ctx) => {
     const url = await ctx.telegram.getFileLink(ctx.message.voice.file_id);
     const buffer = Buffer.from(await (await fetch(url)).arrayBuffer());
     const texto = await ia.transcribirAudio(buffer, 'audio/ogg');
+    const urlSubida = await storage.subirArchivo(buffer, `audio-${Date.now()}.ogg`, 'audio/ogg');
+    session.setUltimoAudio(ctx.chat.id, { url: urlSubida, transcripcion: texto });
     await ctx.reply(`🎙️ Entendí: "${texto}"`);
     await procesarTexto(ctx, texto);
   } catch (err) {
@@ -186,7 +197,9 @@ bot.on('document', async (ctx) => {
     const doc = ctx.message.document;
     const url = await ctx.telegram.getFileLink(doc.file_id);
     const buffer = Buffer.from(await (await fetch(url)).arrayBuffer());
-    const texto = ctx.message.caption || `Te mando un documento (${doc.file_name || 'sin nombre'}). Fijate qué es y ayudame con lo que corresponda.`;
+    const urlSubida = await storage.subirArchivo(buffer, doc.file_name || `documento-${Date.now()}`, doc.mime_type);
+    session.setUltimoDocumentoUrl(ctx.chat.id, { url: urlSubida, nombre: doc.file_name || 'documento' });
+    const texto = ctx.message.caption || `Te mando un documento (${doc.file_name || 'sin nombre'}). Dame un resumen corto de lo importante y ayudame con lo que corresponda.`;
     await procesarConArchivo(ctx, texto, buffer, doc.mime_type || 'application/octet-stream');
   } catch (err) {
     console.error('Error procesando documento:', err);
@@ -525,8 +538,56 @@ async function ejecutarHerramienta(ctx, nombre, args) {
       const url = session.obtenerUltimaFotoUrl(ctx.chat.id);
       if (!url) return { error: 'No tengo ninguna foto reciente para guardar. Mandala primero.' };
       const activo = await presupuestos.obtenerUltimoPresupuesto(cliente.id);
-      await fotos.guardarFoto({ cliente_id: cliente.id, presupuesto_id: activo?.id || null, url, descripcion: args.descripcion || null });
+      await fotos.guardarFoto({ cliente_id: cliente.id, presupuesto_id: activo?.id || null, url, descripcion: args.descripcion || null, etiqueta: args.etiqueta || null });
       return { ok: true };
+    }
+    case 'ver_fotos_cliente': {
+      const cliente = await resolverCliente(ctx, args);
+      if (!cliente) return errorClienteNoEncontrado(args.cliente_nombre);
+      if (cliente.multiple) return errorClienteAmbiguo(cliente.opciones);
+      const lista = await fotos.fotosDeCliente(cliente.id);
+      if (!lista.length) { await ctx.reply(`${cliente.nombre} no tiene fotos guardadas.`); return { cantidad: 0 }; }
+      for (const f of lista.slice(0, 6)) {
+        await ctx.replyWithPhoto(f.url, { caption: f.etiqueta ? `${f.etiqueta}${f.descripcion ? ' - ' + f.descripcion : ''}` : f.descripcion || undefined });
+      }
+      return { cantidad: lista.length };
+    }
+    case 'guardar_documento_cliente': {
+      const cliente = await resolverCliente(ctx, args);
+      if (!cliente) return errorClienteNoEncontrado(args.cliente_nombre);
+      if (cliente.multiple) return errorClienteAmbiguo(cliente.opciones);
+      const doc = session.obtenerUltimoDocumentoUrl(ctx.chat.id);
+      if (!doc) return { error: 'No tengo ningún documento reciente para guardar. Mandalo primero.' };
+      const activo = await presupuestos.obtenerUltimoPresupuesto(cliente.id);
+      await documentos.guardarDocumento({ cliente_id: cliente.id, presupuesto_id: activo?.id || null, url: doc.url, nombre_archivo: doc.nombre, resumen: args.resumen || null });
+      return { ok: true };
+    }
+    case 'guardar_audio_nota': {
+      const cliente = await resolverCliente(ctx, args);
+      if (!cliente) return errorClienteNoEncontrado(args.cliente_nombre);
+      if (cliente.multiple) return errorClienteAmbiguo(cliente.opciones);
+      const audio = session.obtenerUltimoAudio(ctx.chat.id);
+      if (!audio) return { error: 'No tengo ningún audio reciente para guardar. Mandalo primero.' };
+      await audios.guardarAudio({ cliente_id: cliente.id, url: audio.url, transcripcion: audio.transcripcion });
+      return { ok: true };
+    }
+    case 'registrar_gasto_desde_ticket': {
+      const cliente = await resolverCliente(ctx, args);
+      if (!cliente) return errorClienteNoEncontrado(args.cliente_nombre);
+      if (cliente.multiple) return errorClienteAmbiguo(cliente.opciones);
+      const ultimo = await trabajos.obtenerUltimoTrabajo(cliente.id);
+      if (!ultimo) return { error: `${cliente.nombre} no tiene trabajos registrados para asociarle este gasto.` };
+      const nuevoGasto = Number(ultimo.gasto_materiales || 0) + Number(args.monto);
+      await trabajos.editarTrabajo(ultimo.id, { gasto_materiales: nuevoGasto });
+      return { ok: true, gasto_total: nuevoGasto };
+    }
+    case 'listar_archivos_recientes': {
+      const lista = await fotos.fotosRecientes(10);
+      if (!lista.length) { await ctx.reply('No tenés archivos guardados todavía.'); return { cantidad: 0 }; }
+      let msg = '📎 Archivos recientes:\n\n';
+      lista.forEach((f) => { msg += `• ${f.clientes?.nombre || 'Sin cliente'}${f.etiqueta ? ' (' + f.etiqueta + ')' : ''}\n`; });
+      await ctx.reply(msg);
+      return { cantidad: lista.length };
     }
     case 'consultar_rentabilidad': {
       const cliente = await resolverCliente(ctx, args);
@@ -1208,28 +1269,115 @@ async function ejecutarHerramienta(ctx, nombre, args) {
     }
 
     // ---- NOTAS ----
-    case 'guardar_nota': { await notas.crearNota({ titulo: args.titulo || null, contenido: args.contenido }); return { ok: true }; }
+    case 'guardar_nota': {
+      let cliente_id = null;
+      if (args.cliente_nombre) {
+        const cliente = await resolverCliente(ctx, { cliente_nombre: args.cliente_nombre });
+        if (cliente && !cliente.multiple) cliente_id = cliente.id;
+      }
+      const visita_id = session.obtenerVisitaActiva(ctx.chat.id);
+      const nota = await notas.crearNota({
+        titulo: args.titulo || null, contenido: args.contenido, categoria: args.categoria || null,
+        cliente_id, visita_id: cliente_id ? visita_id : null, prioridad: args.prioridad || 'normal',
+      });
+      if (args.fijar) await notas.marcarFijada(nota.id, true);
+      session.setNotaActiva(ctx.chat.id, nota.id);
+      return { ok: true };
+    }
+    case 'editar_nota': {
+      let nota = null;
+      if (args.busqueda) {
+        const encontradas = await notas.buscarNotas(args.busqueda);
+        nota = encontradas[0];
+      } else {
+        const activaId = session.obtenerNotaActiva(ctx.chat.id);
+        nota = activaId ? { id: activaId } : await notas.ultimaNota();
+      }
+      if (!nota) return { error: 'No encontré ninguna nota para editar.' };
+      await notas.editarNota(nota.id, { contenido: args.nuevo_contenido });
+      session.setNotaActiva(ctx.chat.id, nota.id);
+      return { ok: true };
+    }
     case 'buscar_nota': {
       const encontradas = await notas.buscarNotas(args.busqueda || '');
       if (!encontradas.length) return { encontrado: false };
       let msg = '📝 Encontré esto:\n\n';
-      encontradas.forEach((n) => { msg += `${n.titulo ? `${n.titulo}\n` : ''}${n.contenido}\n\n`; });
+      encontradas.forEach((n) => { msg += `${n.fijada ? '📌 ' : ''}${n.titulo ? `${n.titulo}\n` : ''}${n.contenido}\n\n`; });
       await ctx.reply(msg);
+      session.setNotaActiva(ctx.chat.id, encontradas[0].id);
       return { encontrado: true, cantidad: encontradas.length };
     }
     case 'listar_notas': {
-      const lista = await notas.notasRecientes(15);
-      if (!lista.length) { await ctx.reply('No tenés notas guardadas todavía.'); return { cantidad: 0 }; }
+      const lista = await notas.notasRecientes(15, !!args.incluir_completadas);
+      if (!lista.length) { await ctx.reply('No tenés notas activas guardadas.'); return { cantidad: 0 }; }
       let msg = '📝 Tus notas:\n\n';
+      lista.forEach((n) => { msg += `${n.fijada ? '📌 ' : ''}• ${n.titulo || n.contenido.slice(0, 40)}${n.completada ? ' ✅' : ''}\n`; });
+      await ctx.reply(msg);
+      return { cantidad: lista.length };
+    }
+    case 'consultar_notas_por_categoria': {
+      const lista = await notas.notasPorCategoria(args.categoria || '');
+      if (!lista.length) { await ctx.reply(`No tenés notas en "${args.categoria}".`); return { cantidad: 0 }; }
+      let msg = `📝 Notas de "${args.categoria}":\n\n`;
       lista.forEach((n) => { msg += `• ${n.titulo || n.contenido.slice(0, 40)}\n`; });
       await ctx.reply(msg);
       return { cantidad: lista.length };
+    }
+    case 'consultar_notas_por_fecha': {
+      const rango = args.rango || 'semana';
+      const { desde, hasta } = rangoFechas(rango);
+      const lista = await notas.notasEnRango(desde, hasta);
+      if (!lista.length) { await ctx.reply('No tenés notas en ese período.'); return { cantidad: 0 }; }
+      let msg = '📝 Notas:\n\n';
+      lista.forEach((n) => { msg += `• ${n.titulo || n.contenido.slice(0, 40)}\n`; });
+      await ctx.reply(msg);
+      return { cantidad: lista.length };
+    }
+    case 'marcar_nota_completada': {
+      const encontradas = args.busqueda ? await notas.buscarNotas(args.busqueda) : null;
+      const nota = encontradas?.[0] || (session.obtenerNotaActiva(ctx.chat.id) ? { id: session.obtenerNotaActiva(ctx.chat.id) } : null);
+      if (!nota) return { error: 'No encontré esa nota.' };
+      await notas.marcarCompletada(nota.id);
+      return { ok: true };
+    }
+    case 'marcar_nota_fijada': {
+      const encontradas = await notas.buscarNotas(args.busqueda || '');
+      if (!encontradas.length) return { error: 'No encontré esa nota.' };
+      await notas.marcarFijada(encontradas[0].id, args.fijar);
+      return { ok: true };
+    }
+    case 'guardar_foto_nota': {
+      const url = session.obtenerUltimaFotoUrl(ctx.chat.id);
+      if (!url) return { error: 'No tengo ninguna foto reciente. Mandala primero.' };
+      const encontradas = await notas.buscarNotas(args.busqueda || '');
+      if (!encontradas.length) return { error: 'No encontré esa nota.' };
+      await notas.editarNota(encontradas[0].id, { foto_url: url });
+      return { ok: true };
+    }
+    case 'combinar_notas': {
+      const principales = await notas.buscarNotas(args.busqueda_principal || '');
+      const aSumar = await notas.buscarNotas(args.busqueda_a_sumar || '');
+      if (!principales.length || !aSumar.length) return { error: 'No encontré alguna de las dos notas.' };
+      await notas.combinarNotas(principales[0].id, aSumar[0].id);
+      return { ok: true };
+    }
+    case 'exportar_nota_pdf': {
+      const encontradas = await notas.buscarNotas(args.busqueda || '');
+      if (!encontradas.length) return { error: 'No encontré esa nota.' };
+      const nota = encontradas[0];
+      const buffer = await pdf.generarDocumentoLibre({ titulo: nota.titulo || 'Nota', contenido: nota.contenido });
+      await enviarDocumentoConReintento(ctx, { source: buffer, filename: `nota.pdf` });
+      return { ok: true };
     }
     case 'eliminar_nota': {
       const encontradas = await notas.buscarNotas(args.busqueda || '');
       if (!encontradas.length) return { error: 'No encontré ninguna nota con esa descripción.' };
       await notas.eliminarNota(encontradas[0].id);
       return { ok: true };
+    }
+    case 'eliminar_notas_completadas': {
+      const cantidad = await notas.eliminarCompletadas();
+      return { ok: true, cantidad };
     }
 
     // ---- DOCUMENTOS Y REPORTES ----
@@ -1269,9 +1417,95 @@ async function ejecutarHerramienta(ctx, nombre, args) {
       const facturado = lista.reduce((acc, c) => acc + Number(c.monto), 0);
       const cobrado = lista.filter((c) => c.estado === 'cobrado').reduce((acc, c) => acc + Number(c.monto), 0);
       const pendiente = facturado - cobrado;
-      let msg = `📊 Reporte de ${mes}:\n\n💰 Facturado: $${facturado}\n✅ Cobrado: $${cobrado}\n⏳ Pendiente: $${pendiente}`;
+      session.setReporteActivo(ctx.chat.id, 'mensual');
+      return { facturado, cobrado, pendiente, mes };
+    }
+    case 'comparar_meses': {
+      const mes = args.mes_iso || new Date().toISOString().slice(0, 7);
+      const resultado = await reportes.compararMeses(mes);
+      session.setReporteActivo(ctx.chat.id, 'comparacion');
+      return resultado;
+    }
+    case 'consultar_reporte_anual': {
+      const anio = args.anio || String(new Date().getFullYear());
+      const resultado = await reportes.reporteAnual(anio);
+      session.setReporteActivo(ctx.chat.id, 'anual');
+      return { ...resultado, anio };
+    }
+    case 'exportar_reporte_anual': {
+      const anio = args.anio || String(new Date().getFullYear());
+      const resultado = await reportes.reporteAnual(anio);
+      const contenido = `Reporte anual ${anio}\n\nFacturado: $${resultado.facturado}\nCobrado: $${resultado.cobrado}\nPendiente: $${resultado.pendiente}\nCantidad de cobros: ${resultado.cantidad_cobros}`;
+      const buffer = await pdf.generarDocumentoLibre({ titulo: `Reporte Anual ${anio}`, contenido });
+      await enviarDocumentoConReintento(ctx, { source: buffer, filename: `reporte-anual-${anio}.pdf` });
+      await reportes.guardarReporteHistorial('anual', anio, contenido);
+      return { ok: true };
+    }
+    case 'consultar_ranking_clientes': {
+      const mes = args.mes_iso || new Date().toISOString().slice(0, 7);
+      const { desde, hasta } = reportes.rangoMes(mes);
+      const lista = await reportes.rankingClientes(desde, hasta);
+      return { ranking: lista };
+    }
+    case 'consultar_rentabilidad_general': {
+      const mes = args.mes_iso || new Date().toISOString().slice(0, 7);
+      const { desde, hasta } = reportes.rangoMes(mes);
+      return await reportes.rentabilidadGeneral(desde, hasta);
+    }
+    case 'consultar_proyeccion_cierre': {
+      const mes = args.mes_iso || new Date().toISOString().slice(0, 7);
+      return await reportes.proyeccionCierreMes(mes);
+    }
+    case 'consultar_grafico_facturacion': {
+      const lista = await reportes.facturacionPorMes(args.cantidad_meses || 6);
+      const maximo = Math.max(...lista.map((m) => m.total), 1);
+      let msg = '📊 Facturación por mes:\n\n';
+      lista.forEach((m) => {
+        const barras = Math.round((m.total / maximo) * 15);
+        msg += `${m.mes} ${'█'.repeat(barras)} $${m.total}\n`;
+      });
       await ctx.reply(msg);
-      return { facturado, cobrado, pendiente };
+      return { meses: lista };
+    }
+    case 'consultar_facturacion_por_categoria': {
+      const mes = args.mes_iso || new Date().toISOString().slice(0, 7);
+      const { desde, hasta } = reportes.rangoMes(mes);
+      const porCategoria = await reportes.facturacionPorCategoria(desde, hasta);
+      return { por_categoria: porCategoria };
+    }
+    case 'consultar_facturacion_por_rubro': {
+      const mes = args.mes_iso || new Date().toISOString().slice(0, 7);
+      const { desde, hasta } = reportes.rangoMes(mes);
+      const porRubro = await reportes.facturacionPorRubro(desde, hasta);
+      return { por_rubro: porRubro };
+    }
+    case 'consultar_clientes_nuevos_vs_recurrentes': {
+      const mes = args.mes_iso || new Date().toISOString().slice(0, 7);
+      const { desde, hasta } = reportes.rangoMes(mes);
+      return await reportes.clientesNuevosVsRecurrentes(desde, hasta);
+    }
+    case 'consultar_tiempo_cierre_venta': {
+      const dias = await reportes.tiempoPromedioCierre();
+      return { dias_promedio: dias };
+    }
+    case 'consultar_negocio_completo': {
+      const mes = new Date().toISOString().slice(0, 7);
+      const { desde, hasta } = reportes.rangoMes(mes);
+      const reporteMes = await reportes.totalFacturadoEnRango(desde, hasta);
+      const pendientes = await cobros.cobrosPendientes();
+      const totalPendiente = pendientes.reduce((acc, c) => acc + (Number(c.monto) - Number(c.monto_pagado || 0)), 0);
+      const ranking = await reportes.rankingClientes(desde, hasta, 3);
+      const vencidos = await cobros.cobrosVencidos();
+      const enSilencio = await clientes.clientesEnSilencio(6);
+      return {
+        facturado_este_mes: reporteMes,
+        total_pendiente_cobro: totalPendiente,
+        mejores_clientes_del_mes: ranking,
+        alertas: {
+          cobros_vencidos: vencidos.length,
+          clientes_en_silencio: enSilencio.length,
+        },
+      };
     }
 
     default:
@@ -1448,6 +1682,12 @@ async function enviarAgendaDelDia(chatId) {
         const hora = new Date(v.fecha_hora).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
         msg += `Para ${v.clientes?.nombre}${v.clientes?.telefono ? ' (' + v.clientes.telefono + ')' : ''}:\n"Hola ${v.clientes?.nombre}! Te confirmo que hoy paso a las ${hora} para ${v.descripcion}. Cualquier cosa avisame."\n\n`;
       });
+    }
+
+    const notasPend = await notas.notasPendientesHoy();
+    if (notasPend.length) {
+      msg += '\n📝 Notas pendientes:\n';
+      notasPend.forEach((n) => { msg += `  • ${n.titulo || n.contenido.slice(0, 40)}\n`; });
     }
   }
   await bot.telegram.sendMessage(chatId, msg);
