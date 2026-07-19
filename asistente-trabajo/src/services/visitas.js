@@ -1,9 +1,12 @@
 const { supabase } = require('../db');
 
-async function crearVisita({ cliente_id, descripcion, fecha_hora, aviso_horas_antes }) {
+async function crearVisita({ cliente_id, descripcion, fecha_hora, aviso_horas_antes, que_llevar, duracion_minutos, recurrencia_meses }) {
   const { data, error } = await supabase
     .from('visitas')
-    .insert([{ cliente_id, descripcion, fecha_hora, aviso_horas_antes: aviso_horas_antes || 2 }])
+    .insert([{
+      cliente_id, descripcion, fecha_hora, aviso_horas_antes: aviso_horas_antes || 2,
+      que_llevar: que_llevar || null, duracion_minutos: duracion_minutos || 60, recurrencia_meses: recurrencia_meses || null,
+    }])
     .select('*, clientes(nombre, direccion, telefono)')
     .single();
   if (error) throw error;
@@ -16,14 +19,30 @@ async function editarVisita(id, cambios) {
   return data;
 }
 
-async function completarVisita(id) {
-  const { data, error } = await supabase.from('visitas').update({ estado: 'completado' }).eq('id', id).select('*, clientes(nombre)').single();
+async function confirmarVisita(id) {
+  const { data, error } = await supabase.from('visitas').update({ confirmada_por_cliente: true }).eq('id', id).select('*, clientes(nombre)').single();
   if (error) throw error;
   return data;
 }
 
-async function cancelarVisita(id) {
-  const { data, error } = await supabase.from('visitas').update({ estado: 'cancelado' }).eq('id', id).select('*, clientes(nombre)').single();
+async function completarVisita(id) {
+  const { data, error } = await supabase.from('visitas').update({ estado: 'completado' }).eq('id', id).select('*, clientes(nombre)').single();
+  if (error) throw error;
+
+  // Si es recurrente, programamos la próxima automáticamente
+  if (data.recurrencia_meses) {
+    const proxima = new Date(data.fecha_hora);
+    proxima.setMonth(proxima.getMonth() + data.recurrencia_meses);
+    await supabase.from('visitas').insert([{
+      cliente_id: data.cliente_id, descripcion: data.descripcion, fecha_hora: proxima.toISOString(),
+      aviso_horas_antes: data.aviso_horas_antes, duracion_minutos: data.duracion_minutos, recurrencia_meses: data.recurrencia_meses,
+    }]);
+  }
+  return data;
+}
+
+async function cancelarVisita(id, motivo) {
+  const { data, error } = await supabase.from('visitas').update({ estado: 'cancelado', motivo_cancelacion: motivo || null }).eq('id', id).select('*, clientes(nombre)').single();
   if (error) throw error;
   return data;
 }
@@ -106,7 +125,6 @@ async function resumenDelDia(desdeISO, hastaISO) {
   return data;
 }
 
-// Cuántas visitas pendientes hay agendadas para un día puntual (para avisar si está sobrecargado)
 async function contarVisitasDelDia(fechaISO) {
   const dia = new Date(fechaISO);
   const inicio = new Date(dia); inicio.setHours(0, 0, 0, 0);
@@ -116,7 +134,6 @@ async function contarVisitasDelDia(fechaISO) {
   return (data || []).length;
 }
 
-// Cuántas veces se completó una visita a un cliente en el último año
 async function contarVisitasCliente(cliente_id) {
   const haceUnAnio = new Date();
   haceUnAnio.setFullYear(haceUnAnio.getFullYear() - 1);
@@ -125,14 +142,19 @@ async function contarVisitasCliente(cliente_id) {
   return (data || []).length;
 }
 
-// Visitas pendientes que ya se reagendaron 2 o más veces (alerta)
+// Historial detallado (todas las completadas, con fecha)
+async function historialVisitasCliente(cliente_id) {
+  const { data, error } = await supabase.from('visitas').select('*').eq('cliente_id', cliente_id).eq('estado', 'completado').order('fecha_hora', { ascending: false });
+  if (error) throw error;
+  return data;
+}
+
 async function clientesQueReagendanMucho(minimo = 2) {
   const { data, error } = await supabase.from('visitas').select('*, clientes(nombre)').gte('veces_reagendada', minimo).eq('estado', 'pendiente');
   if (error) throw error;
   return data;
 }
 
-// Días de un rango que no tienen ninguna visita pendiente (huecos libres)
 async function diasLibresEnRango(desdeISO, hastaISO) {
   const lista = await visitasEnRango(desdeISO, hastaISO);
   const diasConTrabajo = new Set(lista.map((v) => new Date(v.fecha_hora).toISOString().slice(0, 10)));
@@ -147,9 +169,36 @@ async function diasLibresEnRango(desdeISO, hastaISO) {
   return libres;
 }
 
+// Horas trabajadas (visitas completadas) en un rango
+async function horasTrabajadasEnRango(desdeISO, hastaISO) {
+  const { data, error } = await supabase.from('visitas').select('duracion_minutos').eq('estado', 'completado').gte('fecha_hora', desdeISO).lte('fecha_hora', hastaISO);
+  if (error) throw error;
+  const minutos = (data || []).reduce((acc, v) => acc + (v.duracion_minutos || 60), 0);
+  return Math.round((minutos / 60) * 10) / 10;
+}
+
+// Horarios bloqueados
+async function crearHorarioBloqueado(hora_inicio, hora_fin, descripcion) {
+  const { data, error } = await supabase.from('horarios_bloqueados').insert([{ hora_inicio, hora_fin, descripcion }]).select().single();
+  if (error) throw error;
+  return data;
+}
+
+async function horariosBloqueados() {
+  const { data, error } = await supabase.from('horarios_bloqueados').select('*');
+  if (error) throw error;
+  return data;
+}
+
+function chocaConBloqueado(fechaHoraISO, bloqueados) {
+  const hora = new Date(fechaHoraISO).toTimeString().slice(0, 5);
+  return (bloqueados || []).find((b) => hora >= b.hora_inicio.slice(0, 5) && hora <= b.hora_fin.slice(0, 5));
+}
+
 module.exports = {
   crearVisita,
   editarVisita,
+  confirmarVisita,
   completarVisita,
   cancelarVisita,
   reagendarVisita,
@@ -161,6 +210,11 @@ module.exports = {
   resumenDelDia,
   contarVisitasDelDia,
   contarVisitasCliente,
+  historialVisitasCliente,
   clientesQueReagendanMucho,
   diasLibresEnRango,
+  horasTrabajadasEnRango,
+  crearHorarioBloqueado,
+  horariosBloqueados,
+  chocaConBloqueado,
 };
