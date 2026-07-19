@@ -32,4 +32,12 @@ function limpiarHistorial(chatId) {
   historiales.delete(chatId);
 }
 
-module.exports = { get, set, limpiar, obtenerHistorial, podarHistorial, limpiarHistorial };
+const clienteActivo = new Map();
+function setClienteActivo(chatId, clienteId) {
+  clienteActivo.set(chatId, clienteId);
+}
+function obtenerClienteActivo(chatId) {
+  return clienteActivo.get(chatId) || null;
+}
+
+module.exports = { get, set, limpiar, obtenerHistorial, podarHistorial, limpiarHistorial, setClienteActivo, obtenerClienteActivo };
