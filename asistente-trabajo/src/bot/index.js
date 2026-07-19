@@ -96,7 +96,13 @@ bot.command('cobrado', (ctx) => ejecutarHerramienta(ctx, 'consultar_estado_caja'
   const partes = Object.entries(r.cobrado_hoy_por_metodo || {}).map(([m, v]) => `${m}: $${v}`).join(', ') || 'nada todavía';
   return ctx.reply(`💰 Cobrado hoy: ${partes}`);
 }));
-bot.command('pendiente', (ctx) => ejecutarHerramienta(ctx, 'consultar_pendientes', {}));
+bot.command('pendiente', async (ctx) => {
+  const r = await ejecutarHerramienta(ctx, 'consultar_pendientes', {});
+  if (!r.cantidad) return ctx.reply('No tenés cobros pendientes. 👍');
+  let msg = '💰 Cobros pendientes:\n\n';
+  r.cobros.forEach((c) => { msg += `• ${c.cliente} - $${c.restante}${c.pagado > 0 ? ` (de $${c.monto_total}, pagó $${c.pagado})` : ''}${c.vencimiento ? ' (vence ' + c.vencimiento + ')' : ''}\n`; });
+  await ctx.reply(msg);
+});
 bot.command('equipos', async (ctx) => {
   const lista = await equipos.mantenimientosVencidosSinHacer(0);
   if (!lista.length) return ctx.reply('No tenés mantenimientos próximos a vencer. 👍');
@@ -104,14 +110,38 @@ bot.command('equipos', async (ctx) => {
   lista.forEach((e) => { msg += `• ${e.tipo} de ${e.clientes?.nombre} (${e.proximo_mantenimiento})\n`; });
   await ctx.reply(msg);
 });
-bot.command('notas', (ctx) => ejecutarHerramienta(ctx, 'listar_notas', {}));
+bot.command('notas', async (ctx) => {
+  const r = await ejecutarHerramienta(ctx, 'listar_notas', {});
+  if (!r.cantidad) return ctx.reply('No tenés notas activas guardadas.');
+  let msg = '📝 Tus notas:\n\n';
+  r.notas.forEach((n) => { msg += `${n.fijada ? '📌 ' : ''}• ${n.titulo}${n.completada ? ' ✅' : ''}\n`; });
+  await ctx.reply(msg);
+});
 bot.command('reporte', async (ctx) => {
   const r = await ejecutarHerramienta(ctx, 'consultar_reporte_mensual', {});
   await ctx.reply(`📊 Reporte de ${r.mes}:\n\n💰 Facturado: $${r.facturado}\n✅ Cobrado: $${r.cobrado}\n⏳ Pendiente: $${r.pendiente}`);
 });
-bot.command('fotos', (ctx) => ejecutarHerramienta(ctx, 'listar_archivos_recientes', {}));
-bot.command('catalogo', (ctx) => ejecutarHerramienta(ctx, 'listar_catalogo', {}));
-bot.command('herramientas', (ctx) => ejecutarHerramienta(ctx, 'consultar_pendientes_recuperar', {}));
+bot.command('fotos', async (ctx) => {
+  const r = await ejecutarHerramienta(ctx, 'listar_archivos_recientes', {});
+  if (!r.cantidad) return ctx.reply('No tenés archivos guardados todavía.');
+  let msg = '📎 Archivos recientes:\n\n';
+  r.archivos.forEach((f) => { msg += `• ${f.cliente}${f.etiqueta ? ' (' + f.etiqueta + ')' : ''}\n`; });
+  await ctx.reply(msg);
+});
+bot.command('catalogo', async (ctx) => {
+  const r = await ejecutarHerramienta(ctx, 'listar_catalogo', {});
+  if (!r.cantidad) return ctx.reply('No tenés servicios cargados en el catálogo todavía.');
+  let msg = '📋 Catálogo de servicios:\n\n';
+  r.servicios.forEach((s) => { msg += `• ${s.nombre}: mano de obra $${s.mano_obra}, materiales $${s.materiales_min}-$${s.materiales_max}\n`; });
+  await ctx.reply(msg);
+});
+bot.command('herramientas', async (ctx) => {
+  const r = await ejecutarHerramienta(ctx, 'consultar_pendientes_recuperar', {});
+  if (!r.cantidad) return ctx.reply('No te quedó ninguna herramienta pendiente de recuperar. 👍');
+  let msg = '🧰 Herramientas pendientes de recuperar:\n\n';
+  r.items.forEach((h) => { msg += `• ${h.item} en lo de ${h.cliente}\n`; });
+  await ctx.reply(msg);
+});
 
 // ================= ROUTER PRINCIPAL =================
 
@@ -391,11 +421,7 @@ async function ejecutarHerramienta(ctx, nombre, args) {
     // ---- PRESUPUESTOS ----
     case 'buscar_clientes_por_categoria': {
       const lista = await clientes.buscarClientesPorCategoria(args.categoria || '');
-      if (!lista.length) { await ctx.reply(`No tenés clientes en la categoría "${args.categoria}".`); return { cantidad: 0 }; }
-      let msg = `📋 Categoría "${args.categoria}":\n\n`;
-      lista.forEach((c) => { msg += `• ${c.nombre}${c.telefono ? ' - ' + c.telefono : ''}\n`; });
-      await ctx.reply(msg);
-      return { cantidad: lista.length };
+      return { cantidad: lista.length, clientes: lista.map((c) => ({ nombre: c.nombre, telefono: c.telefono || null })) };
     }
     case 'buscar_cliente_por_telefono': {
       const lista = await clientes.buscarPorTelefono(args.telefono || '');
@@ -404,11 +430,7 @@ async function ejecutarHerramienta(ctx, nombre, args) {
     }
     case 'listar_clientes_recientes': {
       const lista = await clientes.clientesRecientes(10);
-      if (!lista.length) { await ctx.reply('No tenés clientes cargados todavía.'); return { cantidad: 0 }; }
-      let msg = '👥 Clientes recientes:\n\n';
-      lista.forEach((c) => { msg += `• ${c.nombre}${c.apodo ? ' (' + c.apodo + ')' : ''}\n`; });
-      await ctx.reply(msg);
-      return { cantidad: lista.length };
+      return { cantidad: lista.length, clientes: lista.map((c) => ({ nombre: c.nombre, apodo: c.apodo || null })) };
     }
     case 'combinar_clientes': {
       const aConservar = await clientes.buscarClientesPorNombre(args.nombre_a_conservar || '');
@@ -436,19 +458,11 @@ async function ejecutarHerramienta(ctx, nombre, args) {
     }
     case 'consultar_clientes_en_silencio': {
       const lista = await clientes.clientesEnSilencio(args.meses || 6);
-      if (!lista.length) { await ctx.reply('No hay clientes en silencio por ahora. 👍'); return { cantidad: 0 }; }
-      let msg = '🔇 Clientes sin contacto hace tiempo:\n\n';
-      lista.forEach((c) => { msg += `• ${c.nombre} (último contacto: ${c.ultimo_contacto})\n`; });
-      await ctx.reply(msg);
-      return { cantidad: lista.length };
+      return { cantidad: lista.length, clientes: lista.map((c) => ({ nombre: c.nombre, ultimo_contacto: c.ultimo_contacto })) };
     }
     case 'consultar_rechazados_para_reintentar': {
       const lista = await presupuestos.rechazadosParaReintentar(3);
-      if (!lista.length) { await ctx.reply('No hay presupuestos rechazados para reintentar por ahora.'); return { cantidad: 0 }; }
-      let msg = '🔁 Presupuestos rechazados que podrías reintentar:\n\n';
-      lista.forEach((p) => { msg += `• ${p.clientes?.nombre} - ${p.descripcion} ($${p.monto})\n`; });
-      await ctx.reply(msg);
-      return { cantidad: lista.length };
+      return { cantidad: lista.length, presupuestos: lista.map((p) => ({ cliente: p.clientes?.nombre, descripcion: p.descripcion, monto: p.monto })) };
     }
     case 'consultar_trabajos_repetidos': {
       const cliente = await resolverCliente(ctx, args);
@@ -621,11 +635,7 @@ async function ejecutarHerramienta(ctx, nombre, args) {
     }
     case 'listar_archivos_recientes': {
       const lista = await fotos.fotosRecientes(10);
-      if (!lista.length) { await ctx.reply('No tenés archivos guardados todavía.'); return { cantidad: 0 }; }
-      let msg = '📎 Archivos recientes:\n\n';
-      lista.forEach((f) => { msg += `• ${f.clientes?.nombre || 'Sin cliente'}${f.etiqueta ? ' (' + f.etiqueta + ')' : ''}\n`; });
-      await ctx.reply(msg);
-      return { cantidad: lista.length };
+      return { cantidad: lista.length, archivos: lista.map((f) => ({ cliente: f.clientes?.nombre || 'sin cliente', etiqueta: f.etiqueta || null })) };
     }
     case 'consultar_rentabilidad': {
       const cliente = await resolverCliente(ctx, args);
@@ -740,20 +750,12 @@ async function ejecutarHerramienta(ctx, nombre, args) {
     }
     case 'listar_presupuestos': {
       const lista = await presupuestos.listarTodos();
-      if (!lista.length) { await ctx.reply('No tenés presupuestos guardados todavía.'); return { cantidad: 0 }; }
-      let msg = '📋 Presupuestos guardados:\n\n';
-      lista.forEach((p) => { msg += `• ${p.clientes?.nombre || 'Cliente'} - ${p.descripcion} - $${p.monto} [${p.estado}]\n`; });
-      await ctx.reply(msg);
-      return { cantidad: lista.length };
+      return { cantidad: lista.length, presupuestos: lista.map((p) => ({ cliente: p.clientes?.nombre || 'Cliente', descripcion: p.descripcion, monto: p.monto, estado: p.estado })) };
     }
 
     case 'listar_presupuestos_archivados': {
       const lista = await presupuestos.presupuestosArchivados();
-      if (!lista.length) { await ctx.reply('No tenés presupuestos borrados temporalmente. 👍'); return { cantidad: 0 }; }
-      let msg = '🗑️ Presupuestos borrados temporalmente:\n\n';
-      lista.forEach((p) => { msg += `• ${p.clientes?.nombre || 'Cliente'} - ${p.descripcion} ($${p.monto})\n`; });
-      await ctx.reply(msg);
-      return { cantidad: lista.length };
+      return { cantidad: lista.length, presupuestos: lista.map((p) => ({ cliente: p.clientes?.nombre || 'Cliente', descripcion: p.descripcion, monto: p.monto })) };
     }
 
     // ---- RECIBOS ----
@@ -789,14 +791,16 @@ async function ejecutarHerramienta(ctx, nombre, args) {
     // ---- COBROS ----
     case 'consultar_pendientes': {
       const lista = await cobros.cobrosPendientes();
-      if (!lista.length) { await ctx.reply('No tenés cobros pendientes. 👍'); return { cantidad: 0 }; }
-      let msg = '💰 Cobros pendientes:\n\n';
-      lista.forEach((c) => {
-        const restante = Number(c.monto) - Number(c.monto_pagado || 0);
-        msg += `• ${c.clientes?.nombre || 'Cliente'} - $${restante}${c.monto_pagado > 0 ? ` (de $${c.monto}, pagó $${c.monto_pagado})` : ''}${c.fecha_vencimiento ? ' (vence ' + c.fecha_vencimiento + ')' : ''}\n`;
-      });
-      await ctx.reply(msg);
-      return { cantidad: lista.length };
+      return {
+        cantidad: lista.length,
+        cobros: lista.map((c) => ({
+          cliente: c.clientes?.nombre || 'Cliente',
+          restante: Number(c.monto) - Number(c.monto_pagado || 0),
+          monto_total: c.monto,
+          pagado: c.monto_pagado || 0,
+          vencimiento: c.fecha_vencimiento || null,
+        })),
+      };
     }
     case 'registrar_pago_parcial': {
       const cliente = await resolverCliente(ctx, args);
@@ -948,11 +952,7 @@ async function ejecutarHerramienta(ctx, nombre, args) {
 
     case 'consultar_recontactar': {
       const lista = await presupuestos.presupuestosParaRecontactar(7);
-      if (!lista.length) { await ctx.reply('No hay presupuestos para recontactar por ahora. 👍'); return { cantidad: 0 }; }
-      let msg = '📋 Presupuestos para recontactar:\n\n';
-      lista.forEach((p) => { msg += `• ${p.clientes?.nombre || 'Cliente'} - ${p.descripcion} ($${p.monto || '-'})\n`; });
-      await ctx.reply(msg);
-      return { cantidad: lista.length };
+      return { cantidad: lista.length, presupuestos: lista.map((p) => ({ cliente: p.clientes?.nombre || 'Cliente', descripcion: p.descripcion, monto: p.monto || null })) };
     }
 
     // ---- TRABAJOS ----
@@ -1049,11 +1049,7 @@ async function ejecutarHerramienta(ctx, nombre, args) {
     }
     case 'consultar_mantenimientos_vencidos': {
       const lista = await equipos.mantenimientosVencidosSinHacer(7);
-      if (!lista.length) { await ctx.reply('No tenés mantenimientos vencidos sin hacer. 👍'); return { cantidad: 0 }; }
-      let msg = '⚠️ Mantenimientos vencidos sin hacer:\n\n';
-      lista.forEach((e) => { msg += `• ${e.tipo} de ${e.clientes?.nombre} (vencía ${e.proximo_mantenimiento})\n`; });
-      await ctx.reply(msg);
-      return { cantidad: lista.length };
+      return { cantidad: lista.length, equipos: lista.map((e) => ({ tipo: e.tipo, cliente: e.clientes?.nombre, vencia: e.proximo_mantenimiento })) };
     }
     case 'consultar_estadistica_equipos': {
       const conteo = await equipos.estadisticaPorTipo();
@@ -1061,11 +1057,7 @@ async function ejecutarHerramienta(ctx, nombre, args) {
     }
     case 'consultar_equipos_para_reemplazo': {
       const lista = await equipos.equiposParaReemplazo();
-      if (!lista.length) { await ctx.reply('No hay equipos cerca del fin de su vida útil.'); return { cantidad: 0 }; }
-      let msg = '🔧 Equipos que se acercan al fin de su vida útil:\n\n';
-      lista.forEach((e) => { msg += `• ${e.tipo} de ${e.clientes?.nombre} (instalado ${e.fecha_instalacion})\n`; });
-      await ctx.reply(msg);
-      return { cantidad: lista.length };
+      return { cantidad: lista.length, equipos: lista.map((e) => ({ tipo: e.tipo, cliente: e.clientes?.nombre, instalado: e.fecha_instalacion })) };
     }
     case 'generar_ficha_equipo': {
       const cliente = await resolverCliente(ctx, args);
@@ -1347,29 +1339,17 @@ async function ejecutarHerramienta(ctx, nombre, args) {
     }
     case 'listar_notas': {
       const lista = await notas.notasRecientes(15, !!args.incluir_completadas);
-      if (!lista.length) { await ctx.reply('No tenés notas activas guardadas.'); return { cantidad: 0 }; }
-      let msg = '📝 Tus notas:\n\n';
-      lista.forEach((n) => { msg += `${n.fijada ? '📌 ' : ''}• ${n.titulo || n.contenido.slice(0, 40)}${n.completada ? ' ✅' : ''}\n`; });
-      await ctx.reply(msg);
-      return { cantidad: lista.length };
+      return { cantidad: lista.length, notas: lista.map((n) => ({ titulo: n.titulo || n.contenido.slice(0, 40), fijada: !!n.fijada, completada: !!n.completada })) };
     }
     case 'consultar_notas_por_categoria': {
       const lista = await notas.notasPorCategoria(args.categoria || '');
-      if (!lista.length) { await ctx.reply(`No tenés notas en "${args.categoria}".`); return { cantidad: 0 }; }
-      let msg = `📝 Notas de "${args.categoria}":\n\n`;
-      lista.forEach((n) => { msg += `• ${n.titulo || n.contenido.slice(0, 40)}\n`; });
-      await ctx.reply(msg);
-      return { cantidad: lista.length };
+      return { cantidad: lista.length, notas: lista.map((n) => ({ titulo: n.titulo || n.contenido.slice(0, 40) })) };
     }
     case 'consultar_notas_por_fecha': {
       const rango = args.rango || 'semana';
       const { desde, hasta } = rangoFechas(rango);
       const lista = await notas.notasEnRango(desde, hasta);
-      if (!lista.length) { await ctx.reply('No tenés notas en ese período.'); return { cantidad: 0 }; }
-      let msg = '📝 Notas:\n\n';
-      lista.forEach((n) => { msg += `• ${n.titulo || n.contenido.slice(0, 40)}\n`; });
-      await ctx.reply(msg);
-      return { cantidad: lista.length };
+      return { cantidad: lista.length, notas: lista.map((n) => ({ titulo: n.titulo || n.contenido.slice(0, 40) })) };
     }
     case 'marcar_nota_completada': {
       const encontradas = args.busqueda ? await notas.buscarNotas(args.busqueda) : null;
@@ -1452,11 +1432,7 @@ async function ejecutarHerramienta(ctx, nombre, args) {
     }
     case 'listar_catalogo': {
       const lista = await catalogo.listarServicios(args.categoria);
-      if (!lista.length) { await ctx.reply('No tenés servicios cargados en el catálogo todavía.'); return { cantidad: 0 }; }
-      let msg = '📋 Catálogo de servicios:\n\n';
-      lista.forEach((s) => { msg += `• ${s.nombre}: mano de obra $${s.mano_obra}, materiales $${s.materiales_min}-$${s.materiales_max}\n`; });
-      await ctx.reply(msg);
-      return { cantidad: lista.length };
+      return { cantidad: lista.length, servicios: lista.map((s) => ({ nombre: s.nombre, mano_obra: s.mano_obra, materiales_min: s.materiales_min, materiales_max: s.materiales_max })) };
     }
     case 'actualizar_precios_catalogo': {
       const cantidad = await catalogo.actualizarPreciosMasivo(args.porcentaje);
@@ -1502,19 +1478,11 @@ async function ejecutarHerramienta(ctx, nombre, args) {
     }
     case 'consultar_pendientes_recuperar': {
       const lista = await herramientas.pendientesRecuperar();
-      if (!lista.length) { await ctx.reply('No te quedó ninguna herramienta pendiente de recuperar. 👍'); return { cantidad: 0 }; }
-      let msg = '🧰 Herramientas pendientes de recuperar:\n\n';
-      lista.forEach((h) => { msg += `• ${h.item} en lo de ${h.clientes?.nombre}\n`; });
-      await ctx.reply(msg);
-      return { cantidad: lista.length };
+      return { cantidad: lista.length, items: lista.map((h) => ({ item: h.item, cliente: h.clientes?.nombre })) };
     }
     case 'consultar_kit_habitual': {
       const lista = await herramientas.listarKit();
-      if (!lista.length) { await ctx.reply('No tenés un kit habitual guardado todavía.'); return { cantidad: 0 }; }
-      let msg = '🧰 Tu kit habitual:\n\n';
-      lista.forEach((h) => { msg += `• ${h.nombre}${h.estado !== 'buena' ? ' (' + h.estado + ')' : ''}\n`; });
-      await ctx.reply(msg);
-      return { cantidad: lista.length };
+      return { cantidad: lista.length, herramientas: lista.map((h) => ({ nombre: h.nombre, estado: h.estado })) };
     }
     case 'marcar_estado_herramienta': {
       await herramientas.marcarEstado(args.nombre, args.estado, args.notas);
