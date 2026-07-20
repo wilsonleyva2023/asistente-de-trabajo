@@ -1,4 +1,5 @@
 const { supabase } = require('../db');
+const { fechaAR } = require('../utils/fecha');
 
 async function crearCobro({ cliente_id, presupuesto_id, monto, fecha_vencimiento }) {
   const { data, error } = await supabase
@@ -20,7 +21,7 @@ async function marcarCobrado(id, metodo_pago) {
   }
   const { data, error } = await supabase
     .from('cobros')
-    .update({ estado: 'cobrado', fecha_cobro: new Date().toISOString().slice(0, 10), metodo_pago: metodo_pago || actual?.metodo_pago || null })
+    .update({ estado: 'cobrado', fecha_cobro: fechaAR(), metodo_pago: metodo_pago || actual?.metodo_pago || null })
     .eq('id', id)
     .select()
     .single();
@@ -36,7 +37,7 @@ async function registrarPagoParcial(id, montoPagado, metodo_pago) {
   const cambios = { monto_pagado: nuevoPagado, metodo_pago: metodo_pago || actual.metodo_pago || null };
   if (completo) {
     cambios.estado = 'cobrado';
-    cambios.fecha_cobro = new Date().toISOString().slice(0, 10);
+    cambios.fecha_cobro = fechaAR();
     const aTiempo = !actual.fecha_vencimiento || new Date() <= new Date(actual.fecha_vencimiento);
     const campo = aTiempo ? 'pagos_a_tiempo' : 'pagos_tarde';
     const valorActual = actual.clientes?.[campo] || 0;
@@ -127,7 +128,7 @@ async function crearCuotas(cobro_id, cantidad, montoTotal, primerVencimiento) {
   for (let i = 0; i < cantidad; i++) {
     const venc = new Date(primerVencimiento);
     venc.setMonth(venc.getMonth() + i);
-    cuotas.push({ cobro_id, numero_cuota: i + 1, monto: montoPorCuota, fecha_vencimiento: venc.toISOString().slice(0, 10) });
+    cuotas.push({ cobro_id, numero_cuota: i + 1, monto: montoPorCuota, fecha_vencimiento: fechaAR(venc) });
   }
   const { data, error } = await supabase.from('cobro_cuotas').insert(cuotas).select();
   if (error) throw error;
@@ -169,7 +170,7 @@ async function aplicarDescuentoProntoPago(id, porcentaje, fechaLimite) {
 
 // ---------- NUEVO: vencidos (para agrupar en un solo aviso) ----------
 async function cobrosVencidos() {
-  const hoy = new Date().toISOString().slice(0, 10);
+  const hoy = fechaAR();
   const { data, error } = await supabase
     .from('cobros')
     .select('*, clientes(nombre, telefono)')
@@ -198,7 +199,7 @@ async function deudasPorAntiguedad() {
 // ---------- NUEVO: caja del día / proyección / por método ----------
 async function cajaDelDia() {
   const inicio = new Date(); inicio.setHours(0, 0, 0, 0);
-  const { data, error } = await supabase.from('cobros').select('*').eq('estado', 'cobrado').gte('fecha_cobro', inicio.toISOString().slice(0, 10));
+  const { data, error } = await supabase.from('cobros').select('*').eq('estado', 'cobrado').gte('fecha_cobro', fechaAR(inicio));
   if (error) throw error;
   const porMetodo = {};
   (data || []).forEach((c) => {
@@ -209,7 +210,7 @@ async function cajaDelDia() {
 }
 
 async function proyeccionIngresos(dias = 15) {
-  const hoy = new Date().toISOString().slice(0, 10);
+  const hoy = fechaAR();
   const limite = new Date(); limite.setDate(limite.getDate() + dias);
   const { data, error } = await supabase
     .from('cobros')
@@ -217,7 +218,7 @@ async function proyeccionIngresos(dias = 15) {
     .eq('estado', 'pendiente')
     .eq('archivado', false)
     .gte('fecha_vencimiento', hoy)
-    .lte('fecha_vencimiento', limite.toISOString().slice(0, 10));
+    .lte('fecha_vencimiento', fechaAR(limite));
   if (error) throw error;
   return (data || []).reduce((acc, c) => acc + (Number(c.monto) - Number(c.monto_pagado || 0)), 0);
 }
