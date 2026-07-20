@@ -1,4 +1,5 @@
 const { supabase } = require('../db');
+const { fechaAR } = require('../utils/fecha');
 
 async function crearVisita({ cliente_id, descripcion, fecha_hora, aviso_horas_antes, que_llevar, duracion_minutos, recurrencia_meses }) {
   const { data, error } = await supabase
@@ -157,12 +158,12 @@ async function clientesQueReagendanMucho(minimo = 2) {
 
 async function diasLibresEnRango(desdeISO, hastaISO) {
   const lista = await visitasEnRango(desdeISO, hastaISO);
-  const diasConTrabajo = new Set(lista.map((v) => new Date(v.fecha_hora).toISOString().slice(0, 10)));
+  const diasConTrabajo = new Set(lista.map((v) => fechaAR(new Date(v.fecha_hora))));
   const libres = [];
   const cursor = new Date(desdeISO);
   const fin = new Date(hastaISO);
   while (cursor <= fin) {
-    const clave = cursor.toISOString().slice(0, 10);
+    const clave = fechaAR(cursor);
     if (!diasConTrabajo.has(clave)) libres.push(clave);
     cursor.setDate(cursor.getDate() + 1);
   }
