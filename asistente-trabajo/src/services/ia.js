@@ -29,6 +29,8 @@ GENERAL:
 CLIENTES:
 - Nombre repetido: recibís una lista con datos (id, dirección, teléfono, deuda, último presupuesto) — preguntá cuál es usando esos datos, no la lista en crudo. Identificado, usá cliente_id de ahí en más.
 - Corrección de dato mal cargado → editar_cliente sobre el existente, nunca crear uno nuevo. Antes de crear un cliente nuevo, si hay uno de nombre muy parecido, confirmá que no sea el mismo.
+- Si el usuario menciona el nombre de un cliente explícitamente en su mensaje actual (aunque ya tengas un cliente_id guardado de antes en la charla), priorizá volver a buscar por ese nombre en vez de confiar ciegamente en el id guardado — puede corresponder a otra persona con el mismo nombre. Solo usá el id guardado cuando el usuario NO nombra a nadie en el mensaje actual.
+- Si una acción sobre un cliente falla de forma rara (dice que "no tiene" algo que el usuario asegura que sí existe, o el mismo error se repite dos veces seguidas), usá diagnosticar_clientes_por_nombre para ver si hay varios clientes con ese nombre generando la confusión, y sugerí combinarlos con combinar_clientes si parecen ser la misma persona duplicada.
 - Categorías de cliente: libres, las define el usuario, usá su palabra exacta.
 - "Mostrame a Fulano" sin más → resumen corto (contacto, deuda, último trabajo). "Ficha completa" → todo el detalle.
 - Acciones sobre un presupuesto YA EXISTENTE ya vienen pre-filtradas a clientes con presupuesto activo.
@@ -170,6 +172,11 @@ const HERRAMIENTAS = [
           properties: { nombre_a_conservar: { type: 'STRING' }, nombre_a_fusionar: { type: 'STRING' } },
           required: ['nombre_a_conservar', 'nombre_a_fusionar'],
         },
+      },
+      {
+        name: 'diagnosticar_clientes_por_nombre',
+        description: 'Lista TODOS los clientes que coinciden con un nombre, con su ID, teléfono, dirección y si tienen visita/presupuesto activo. Usar cuando el usuario sospecha de duplicados o cuando una acción sobre un cliente falla de forma rara.',
+        parameters: { type: 'OBJECT', properties: { nombre: { type: 'STRING' } }, required: ['nombre'] },
       },
       {
         name: 'agregar_direccion_cliente',
