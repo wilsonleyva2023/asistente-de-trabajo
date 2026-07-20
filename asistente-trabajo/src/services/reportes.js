@@ -1,10 +1,11 @@
 const { supabase } = require('../db');
+const { fechaAR } = require('../utils/fecha');
 
 function rangoMes(mesISO) {
   const desde = `${mesISO}-01`;
-  const fin = new Date(desde);
+  const fin = new Date(desde + 'T00:00:00-03:00');
   fin.setMonth(fin.getMonth() + 1);
-  return { desde: `${desde}T00:00:00.000Z`, hasta: fin.toISOString() };
+  return { desde: `${desde}T00:00:00-03:00`, hasta: fin.toISOString() };
 }
 
 async function totalFacturadoEnRango(desdeISO, hastaISO) {
@@ -16,17 +17,17 @@ async function totalFacturadoEnRango(desdeISO, hastaISO) {
 // Compara un mes contra el anterior
 async function compararMeses(mesISO) {
   const actual = await totalFacturadoEnRango(...Object.values(rangoMes(mesISO)));
-  const fechaAnterior = new Date(`${mesISO}-01`);
+  const fechaAnterior = new Date(`${mesISO}-01T00:00:00-03:00`);
   fechaAnterior.setMonth(fechaAnterior.getMonth() - 1);
-  const mesAnteriorISO = fechaAnterior.toISOString().slice(0, 7);
+  const mesAnteriorISO = fechaAR(fechaAnterior).slice(0, 7);
   const anterior = await totalFacturadoEnRango(...Object.values(rangoMes(mesAnteriorISO)));
   const diferencia = anterior > 0 ? Math.round(((actual - anterior) / anterior) * 100) : null;
   return { mes_actual: actual, mes_anterior: anterior, variacion_porcentaje: diferencia };
 }
 
 async function reporteAnual(anio) {
-  const desde = `${anio}-01-01T00:00:00.000Z`;
-  const hasta = `${Number(anio) + 1}-01-01T00:00:00.000Z`;
+  const desde = `${anio}-01-01T00:00:00-03:00`;
+  const hasta = `${Number(anio) + 1}-01-01T00:00:00-03:00`;
   const { data, error } = await supabase.from('cobros').select('*').gte('creado_en', desde).lte('creado_en', hasta);
   if (error) throw error;
   const facturado = (data || []).reduce((acc, c) => acc + Number(c.monto), 0);
@@ -46,7 +47,7 @@ async function rankingClientes(desdeISO, hastaISO, limite = 5) {
 }
 
 async function rentabilidadGeneral(desdeISO, hastaISO) {
-  const { data: trabajosData, error } = await supabase.from('trabajos').select('gasto_materiales').gte('fecha', desdeISO.slice(0, 10)).lte('fecha', hastaISO.slice(0, 10));
+  const { data: trabajosData, error } = await supabase.from('trabajos').select('gasto_materiales').gte('fecha', desdeISO.slice(0, 10)).lt('fecha', hastaISO.slice(0, 10));
   if (error) throw error;
   const gastos = (trabajosData || []).reduce((acc, t) => acc + Number(t.gasto_materiales || 0), 0);
   const facturado = await totalFacturadoEnRango(desdeISO, hastaISO);
@@ -71,7 +72,7 @@ async function facturacionPorMes(cantidadMeses = 6) {
   const hoy = new Date();
   for (let i = cantidadMeses - 1; i >= 0; i--) {
     const fecha = new Date(hoy.getFullYear(), hoy.getMonth() - i, 1);
-    const mesISO = fecha.toISOString().slice(0, 7);
+    const mesISO = fechaAR(fecha).slice(0, 7);
     const { desde, hasta } = rangoMes(mesISO);
     const total = await totalFacturadoEnRango(desde, hasta);
     resultado.push({ mes: mesISO, total });
@@ -91,7 +92,7 @@ async function facturacionPorCategoria(desdeISO, hastaISO) {
 }
 
 async function facturacionPorRubro(desdeISO, hastaISO) {
-  const { data, error } = await supabase.from('trabajos').select('rubro, presupuestos(monto)').gte('fecha', desdeISO.slice(0, 10)).lte('fecha', hastaISO.slice(0, 10));
+  const { data, error } = await supabase.from('trabajos').select('rubro, presupuestos(monto)').gte('fecha', desdeISO.slice(0, 10)).lt('fecha', hastaISO.slice(0, 10));
   if (error) throw error;
   const porRubro = {};
   (data || []).forEach((t) => {
