@@ -181,7 +181,7 @@ async function generarPresupuesto({
 }) {
   const listaItems = items && items.length ? items : [{ descripcion, monto }];
   return generarPDFBuffer((doc) => {
-    let y = encabezado(doc, 'Presupuesto', numero, new Date().toLocaleDateString('es-AR'), diasValidez);
+    let y = encabezado(doc, 'Presupuesto', numero, new Date().toLocaleDateString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' }), diasValidez);
     const clienteMostrado = direccionTrabajo ? { ...cliente, direccion: direccionTrabajo } : cliente;
     y = datosCliente(doc, y, clienteMostrado);
     const { y: y2, total } = tablaItems(doc, y, listaItems);
@@ -202,7 +202,7 @@ async function generarPresupuesto({
 async function generarRecibo({ cliente, items, monto, concepto, numero = '0001', esPagoParcial = false }) {
   const listaItems = items && items.length ? items : [{ descripcion: concepto, monto }];
   return generarPDFBuffer((doc) => {
-    let y = encabezado(doc, 'Recibo de Pago', numero, new Date().toLocaleDateString('es-AR'));
+    let y = encabezado(doc, 'Recibo de Pago', numero, new Date().toLocaleDateString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' }));
     y = datosCliente(doc, y, cliente);
     const { y: y2, total } = tablaItems(doc, y, listaItems);
     totalFinal(doc, y2, total, esPagoParcial ? 'PAGO PARCIAL' : 'RECIBIDO');
@@ -212,7 +212,7 @@ async function generarRecibo({ cliente, items, monto, concepto, numero = '0001',
 
 async function generarDocumentoLibre({ titulo, contenido }) {
   return generarPDFBuffer((doc) => {
-    let y = encabezado(doc, titulo || 'Documento', '—', new Date().toLocaleDateString('es-AR'));
+    let y = encabezado(doc, titulo || 'Documento', '—', new Date().toLocaleDateString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' }));
     const ancho = doc.page.width;
     doc.fillColor(NEGRO).fontSize(10).font('Helvetica').text(contenido, 30, y + 10, { width: ancho - 60, align: 'left' });
     piePagina(doc);
@@ -221,19 +221,19 @@ async function generarDocumentoLibre({ titulo, contenido }) {
 
 async function generarExtracto({ cliente, presupuestos, recibos }) {
   return generarPDFBuffer((doc) => {
-    let y = encabezado(doc, 'Extracto de Cuenta', '—', new Date().toLocaleDateString('es-AR'));
+    let y = encabezado(doc, 'Extracto de Cuenta', '—', new Date().toLocaleDateString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' }));
     y = datosCliente(doc, y, cliente);
     doc.fillColor(DORADO).fontSize(9).font('Helvetica-Bold').text('PRESUPUESTOS', 30, y);
     y += 14;
     (presupuestos || []).forEach((p) => {
-      doc.fillColor(NEGRO).fontSize(8.5).font('Helvetica').text(`${new Date(p.fecha_creacion).toLocaleDateString('es-AR')} - ${p.descripcion} - $${Number(p.monto).toLocaleString('es-AR')} [${p.estado}]`, 30, y, { width: doc.page.width - 60 });
+      doc.fillColor(NEGRO).fontSize(8.5).font('Helvetica').text(`${new Date(p.fecha_creacion).toLocaleDateString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' })} - ${p.descripcion} - $${Number(p.monto).toLocaleString('es-AR')} [${p.estado}]`, 30, y, { width: doc.page.width - 60 });
       y = doc.y + 4;
     });
     y += 10;
     doc.fillColor(DORADO).fontSize(9).font('Helvetica-Bold').text('RECIBOS / PAGOS', 30, y);
     y += 14;
     (recibos || []).forEach((r) => {
-      doc.fillColor(NEGRO).fontSize(8.5).font('Helvetica').text(`${new Date(r.creado_en).toLocaleDateString('es-AR')} - ${r.concepto} - $${Number(r.monto).toLocaleString('es-AR')}`, 30, y, { width: doc.page.width - 60 });
+      doc.fillColor(NEGRO).fontSize(8.5).font('Helvetica').text(`${new Date(r.creado_en).toLocaleDateString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' })} - ${r.concepto} - $${Number(r.monto).toLocaleString('es-AR')}`, 30, y, { width: doc.page.width - 60 });
       y = doc.y + 4;
     });
     piePagina(doc);
@@ -242,7 +242,7 @@ async function generarExtracto({ cliente, presupuestos, recibos }) {
 
 async function generarBitacora({ titulo, trabajos }) {
   return generarPDFBuffer((doc) => {
-    let y = encabezado(doc, titulo, '—', new Date().toLocaleDateString('es-AR'));
+    let y = encabezado(doc, titulo, '—', new Date().toLocaleDateString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' }));
     (trabajos || []).forEach((t) => {
       doc.fillColor(DORADO).fontSize(8.5).font('Helvetica-Bold').text(`${t.fecha} - ${t.clientes?.nombre || 'Cliente'}`, 30, y);
       y = doc.y + 2;
@@ -255,7 +255,7 @@ async function generarBitacora({ titulo, trabajos }) {
 
 async function generarAgendaPdf({ titulo, dias }) {
   return generarPDFBuffer((doc) => {
-    let y = encabezado(doc, titulo, '—', new Date().toLocaleDateString('es-AR'));
+    let y = encabezado(doc, titulo, '—', new Date().toLocaleDateString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' }));
     (dias || []).forEach((dia) => {
       doc.fillColor(DORADO).fontSize(10).font('Helvetica-Bold').text(dia.etiqueta, 30, y);
       y = doc.y + 4;
@@ -297,7 +297,7 @@ function generarICS(visitas) {
 
 async function generarFichaEquipo({ cliente, equipo }) {
   return generarPDFBuffer((doc) => {
-    let y = encabezado(doc, 'Ficha Técnica', '—', new Date().toLocaleDateString('es-AR'));
+    let y = encabezado(doc, 'Ficha Técnica', '—', new Date().toLocaleDateString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' }));
     y = datosCliente(doc, y, cliente);
     y += 6;
     const campos = [
