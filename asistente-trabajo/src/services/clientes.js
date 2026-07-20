@@ -1,4 +1,5 @@
 const { supabase } = require('../db');
+const { fechaAR } = require('../utils/fecha');
 
 async function crearCliente({ nombre, telefono, direccion, notas, apodo, referido_por, categoria, cumpleanos, horario_preferido, relacion, descuento_habitual, contacto_secundario }) {
   const { data, error } = await supabase
@@ -104,7 +105,7 @@ async function ultimoContacto(id) {
   const { data: presupuesto } = await supabase.from('presupuestos').select('fecha_creacion').eq('cliente_id', id).order('fecha_creacion', { ascending: false }).limit(1).maybeSingle();
   const fechas = [trabajo?.fecha, presupuesto?.fecha_creacion].filter(Boolean).map((f) => new Date(f));
   if (!fechas.length) return null;
-  return new Date(Math.max(...fechas)).toISOString().slice(0, 10);
+  return fechaAR(new Date(Math.max(...fechas)));
 }
 
 // Clientes sin ningún contacto hace más de X meses (para la alerta automática)
