@@ -327,7 +327,23 @@ async function resolverClienteConVisita(ctx, args) {
   if (!cliente) return errorClienteNoEncontrado(args.cliente_nombre);
   if (cliente.multiple) return errorClienteAmbiguo(cliente.opciones);
   const visita = await visitas.proximaVisitaPendiente(cliente.id);
-  if (!visita) return { error: `${cliente.nombre} no tiene ninguna visita agendada pendiente.` };
+  if (!visita) {
+    // Antes de rendirnos: ¿hay otro cliente con el mismo nombre que sí tiene esa visita? (caso de duplicados)
+    if (args.cliente_nombre) {
+      const homonimos = await clientes.buscarClientesPorNombre(args.cliente_nombre);
+      for (const otro of homonimos) {
+        if (otro.id === cliente.id) continue;
+        const visitaOtro = await visitas.proximaVisitaPendiente(otro.id);
+        if (visitaOtro) {
+          return {
+            error: `Encontré la visita, pero está bajo otro registro de "${args.cliente_nombre}" (hay más de un cliente con ese nombre). Confirmá con el usuario si son la misma persona — si es así, sugerí combinar_clientes para unificarlos — y volvé a intentar con cliente_id="${otro.id}".`,
+            cliente_id_alternativo: otro.id,
+          };
+        }
+      }
+    }
+    return { error: `${cliente.nombre} no tiene ninguna visita agendada pendiente.` };
+  }
   session.setVisitaActiva(ctx.chat.id, visita.id);
   return { cliente, visita };
 }
@@ -466,6 +482,21 @@ async function ejecutarHerramienta(ctx, nombre, args) {
       if (aConservar.length > 1 || aFusionar.length > 1) return { error: 'Hay más de un cliente con alguno de esos nombres, sé más específico.' };
       await clientes.combinarClientes(aFusionar[0].id, aConservar[0].id);
       return { ok: true, mensaje: `Se unió todo el historial de "${aFusionar[0].nombre}" dentro de "${aConservar[0].nombre}".` };
+    }
+    case 'diagnosticar_clientes_por_nombre': {
+      const lista = await clientes.buscarClientesPorNombre(args.nombre || '');
+      if (!lista.length) return { cantidad: 0 };
+      const detalle = [];
+      for (const c of lista) {
+        const visita = await visitas.proximaVisitaPendiente(c.id);
+        const presupuesto = await presupuestos.obtenerUltimoPresupuesto(c.id);
+        detalle.push({
+          id: c.id, nombre: c.nombre, telefono: c.telefono || 'sin teléfono', direccion: c.direccion || 'sin dirección',
+          creado: c.creado_en, visita_pendiente: visita ? `${visita.fecha_hora}` : null,
+          presupuesto_activo: presupuesto ? `${presupuesto.descripcion} $${presupuesto.monto}` : null,
+        });
+      }
+      return { cantidad: lista.length, clientes: detalle };
     }
     case 'agregar_direccion_cliente': {
       const cliente = await resolverCliente(ctx, args);
