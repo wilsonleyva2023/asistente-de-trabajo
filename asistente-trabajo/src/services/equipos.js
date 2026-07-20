@@ -1,17 +1,18 @@
 const { supabase } = require('../db');
+const { fechaAR } = require('../utils/fecha');
 
 async function registrarEquipo({ cliente_id, tipo, descripcion, fecha_instalacion, meses_para_mantenimiento, aviso_automatico, marca, modelo, numero_serie, garantia_fabrica_meses, vida_util_anios, presupuesto_id }) {
   let proximo_mantenimiento = null;
   if (meses_para_mantenimiento) {
     const f = new Date(fecha_instalacion);
     f.setMonth(f.getMonth() + Number(meses_para_mantenimiento));
-    proximo_mantenimiento = f.toISOString().slice(0, 10);
+    proximo_mantenimiento = fechaAR(f);
   }
   let garantia_fabrica_vencimiento = null;
   if (garantia_fabrica_meses) {
     const g = new Date(fecha_instalacion);
     g.setMonth(g.getMonth() + Number(garantia_fabrica_meses));
-    garantia_fabrica_vencimiento = g.toISOString().slice(0, 10);
+    garantia_fabrica_vencimiento = fechaAR(g);
   }
   const { data, error } = await supabase
     .from('equipos')
@@ -53,7 +54,7 @@ async function buscarEquipoDeCliente(cliente_id, texto) {
 }
 
 async function mantenimientosDelDia() {
-  const hoy = new Date().toISOString().slice(0, 10);
+  const hoy = fechaAR();
   const { data, error } = await supabase
     .from('equipos')
     .select('*, clientes(nombre, telefono)')
@@ -74,7 +75,7 @@ async function mantenimientosVencidosSinHacer(diasMinimo = 7) {
     .select('*, clientes(nombre, telefono)')
     .eq('activo', true)
     .not('proximo_mantenimiento', 'is', null)
-    .lt('proximo_mantenimiento', limite.toISOString().slice(0, 10));
+    .lt('proximo_mantenimiento', fechaAR(limite));
   if (error) throw error;
   return data;
 }
@@ -84,12 +85,12 @@ async function marcarAvisoEnviado(id) {
   if (errGet) throw errGet;
 
   // Guardamos el mantenimiento en el historial antes de reprogramar
-  await supabase.from('mantenimientos_historial').insert([{ equipo_id: id, fecha: new Date().toISOString().slice(0, 10) }]);
+  await supabase.from('mantenimientos_historial').insert([{ equipo_id: id, fecha: fechaAR() }]);
 
   if (equipo.meses_intervalo) {
     const siguiente = new Date(equipo.proximo_mantenimiento);
     siguiente.setMonth(siguiente.getMonth() + Number(equipo.meses_intervalo));
-    const { error } = await supabase.from('equipos').update({ proximo_mantenimiento: siguiente.toISOString().slice(0, 10), aviso_enviado: false }).eq('id', id);
+    const { error } = await supabase.from('equipos').update({ proximo_mantenimiento: fechaAR(siguiente), aviso_enviado: false }).eq('id', id);
     if (error) throw error;
   } else {
     const { error } = await supabase.from('equipos').update({ aviso_enviado: true }).eq('id', id);
@@ -141,8 +142,8 @@ async function clientesConMantenimientosAgrupables(diasVentana = 15) {
     .select('*, clientes(nombre)')
     .eq('activo', true)
     .not('proximo_mantenimiento', 'is', null)
-    .gte('proximo_mantenimiento', hoy.toISOString().slice(0, 10))
-    .lte('proximo_mantenimiento', limite.toISOString().slice(0, 10));
+    .gte('proximo_mantenimiento', fechaAR(hoy))
+    .lte('proximo_mantenimiento', fechaAR(limite));
   if (error) throw error;
   const porCliente = {};
   (data || []).forEach((e) => {
