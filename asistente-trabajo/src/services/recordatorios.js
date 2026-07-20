@@ -15,6 +15,7 @@ async function avanzarRecurrentes() {
     const nueva = new Date(r.fecha_hora);
     if (r.recurrencia === 'semanal') nueva.setDate(nueva.getDate() + 7);
     else if (r.recurrencia === 'mensual') nueva.setMonth(nueva.getMonth() + 1);
+    else if (r.recurrencia === 'anual') nueva.setFullYear(nueva.getFullYear() + 1);
     else continue;
     await supabase.from('recordatorios').update({ fecha_hora: nueva.toISOString() }).eq('id', r.id);
   }
