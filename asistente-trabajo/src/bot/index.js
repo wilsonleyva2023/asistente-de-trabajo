@@ -15,6 +15,7 @@ const reportes = require('../services/reportes');
 const documentos = require('../services/documentos');
 const audios = require('../services/audios');
 const catalogo = require('../services/catalogo');
+const reglas = require('../services/reglas');
 const herramientas = require('../services/herramientas');
 const pdf = require('../services/pdf');
 const ia = require('../services/ia');
@@ -369,6 +370,15 @@ async function ejecutarHerramienta(ctx, nombre, args) {
       return { encontrado: true, cantidad: 1, cliente_id: encontrados[0].id };
     }
     case 'crear_cliente': {
+      if (!args.confirmado_no_duplicado) {
+        const parecidos = await clientes.buscarClientesPorNombre(args.nombre || '');
+        if (parecidos.length) {
+          return {
+            error: `Ya existe al menos un cliente con un nombre parecido. Preguntale al usuario si es la misma persona (y en ese caso no crear uno nuevo) o si es alguien distinto (en ese caso, volvé a llamar a esta misma herramienta agregando confirmado_no_duplicado=true).`,
+            parecidos: parecidos.map((c) => ({ nombre: c.nombre, direccion: c.direccion || 'sin dirección', telefono: c.telefono || 'sin teléfono' })),
+          };
+        }
+      }
       const cliente = await clientes.crearCliente({
         nombre: args.nombre, telefono: args.telefono || null, direccion: args.direccion || null,
         notas: args.notas || null, apodo: args.apodo || null, referido_por: args.referido_por || null,
@@ -376,6 +386,14 @@ async function ejecutarHerramienta(ctx, nombre, args) {
         relacion: args.relacion || null, descuento_habitual: args.descuento_habitual || 0, contacto_secundario: args.contacto_secundario || null,
       });
       session.setClienteActivo(ctx.chat.id, cliente.id);
+      if (args.cumpleanos_iso) {
+        const fechaCumple = new Date(args.cumpleanos_iso);
+        const esteAnio = new Date();
+        esteAnio.setMonth(fechaCumple.getMonth(), fechaCumple.getDate());
+        esteAnio.setHours(9, 0, 0, 0);
+        if (esteAnio < new Date()) esteAnio.setFullYear(esteAnio.getFullYear() + 1);
+        await recordatorios.crearRecordatorio({ texto: `Cumpleaños de ${cliente.nombre} 🎂`, fecha_hora: esteAnio.toISOString(), recurrencia: 'anual' });
+      }
       return { ok: true, nombre: cliente.nombre, cliente_id: cliente.id };
     }
     case 'editar_cliente': {
@@ -398,6 +416,14 @@ async function ejecutarHerramienta(ctx, nombre, args) {
       if (args.nuevo_contacto_secundario) cambios.contacto_secundario = args.nuevo_contacto_secundario;
       if (!Object.keys(cambios).length) return { error: 'No se especificó qué corregir.' };
       const actualizado = await clientes.actualizarCliente(cliente.id, cambios);
+      if (args.cumpleanos_iso) {
+        const fechaCumple = new Date(args.cumpleanos_iso);
+        const esteAnio = new Date();
+        esteAnio.setMonth(fechaCumple.getMonth(), fechaCumple.getDate());
+        esteAnio.setHours(9, 0, 0, 0);
+        if (esteAnio < new Date()) esteAnio.setFullYear(esteAnio.getFullYear() + 1);
+        await recordatorios.crearRecordatorio({ texto: `Cumpleaños de ${actualizado.nombre} 🎂`, fecha_hora: esteAnio.toISOString(), recurrencia: 'anual' });
+      }
       return { ok: true, cliente_id: actualizado.id, nombre: actualizado.nombre };
     }
     case 'eliminar_cliente': {
@@ -591,13 +617,24 @@ async function ejecutarHerramienta(ctx, nombre, args) {
       if (!cliente) return errorClienteNoEncontrado(args.cliente_nombre);
       if (cliente.multiple) return errorClienteAmbiguo(cliente.opciones);
       let trabajoId = null;
+      let lista;
       if (args.trabajo_texto) {
         const candidatos = await trabajos.buscarTrabajoDeCliente(cliente.id, args.trabajo_texto);
-        if (!candidatos.length) return { error: `${cliente.nombre} no tiene ningún trabajo que coincida con "${args.trabajo_texto}".` };
-        if (candidatos.length > 1) return { error: 'Hay más de un trabajo que coincide, preguntale al usuario cuál (con fecha) antes de mostrar fotos.', opciones: candidatos.map((t) => ({ descripcion: t.descripcion, fecha: t.fecha })) };
-        trabajoId = candidatos[0].id;
+        if (candidatos.length === 1) {
+          trabajoId = candidatos[0].id;
+          lista = await fotos.fotosDeCliente(cliente.id, { trabajo_id: trabajoId, etiqueta: args.etiqueta });
+        } else if (candidatos.length > 1) {
+          return { error: 'Hay más de un trabajo que coincide, preguntale al usuario cuál (con fecha) antes de mostrar fotos.', opciones: candidatos.map((t) => ({ descripcion: t.descripcion, fecha: t.fecha })) };
+        } else {
+          // No hay un trabajo registrado con ese nombre: busco directo en la descripción de las fotos.
+          const todas = await fotos.fotosDeCliente(cliente.id, { etiqueta: args.etiqueta });
+          const texto = args.trabajo_texto.toLowerCase();
+          lista = todas.filter((f) => (f.descripcion || '').toLowerCase().includes(texto));
+          if (!lista.length) return { error: `${cliente.nombre} no tiene ningún trabajo ni foto que coincida con "${args.trabajo_texto}".` };
+        }
+      } else {
+        lista = await fotos.fotosDeCliente(cliente.id, { etiqueta: args.etiqueta });
       }
-      const lista = await fotos.fotosDeCliente(cliente.id, { trabajo_id: trabajoId, etiqueta: args.etiqueta });
       if (!lista.length) { await ctx.reply(`${cliente.nombre} no tiene fotos guardadas con ese filtro.`); return { cantidad: 0 }; }
       for (const f of lista.slice(0, 6)) {
         await ctx.replyWithPhoto(f.url, { caption: f.etiqueta ? `${f.etiqueta}${f.descripcion ? ' - ' + f.descripcion : ''}` : f.descripcion || undefined });
@@ -650,6 +687,7 @@ async function ejecutarHerramienta(ctx, nombre, args) {
       const cliente = await resolverCliente(ctx, args);
       if (!cliente) return errorClienteNoEncontrado(args.cliente_nombre);
       if (cliente.multiple) return errorClienteAmbiguo(cliente.opciones);
+      if (cliente.bloqueado) return { error: `${cliente.nombre} está marcado como cliente bloqueado ("no volver a atender"). Confirmale al usuario si igual quiere seguir antes de continuar.` };
       const items = args.items && args.items.length ? args.items : [];
       if (!items.length) return { error: 'No se especificaron ítems para el presupuesto.' };
       const creado = await presupuestos.crearPresupuesto({ cliente_id: cliente.id, items, dias_validez: args.dias_validez || 15 });
@@ -1108,6 +1146,7 @@ async function ejecutarHerramienta(ctx, nombre, args) {
       const cliente = await resolverCliente(ctx, args);
       if (!cliente) return errorClienteNoEncontrado(args.cliente_nombre);
       if (cliente.multiple) return errorClienteAmbiguo(cliente.opciones);
+      if (cliente.bloqueado) return { error: `${cliente.nombre} está marcado como cliente bloqueado ("no volver a atender"). Confirmale al usuario si igual quiere seguir antes de continuar.` };
       const fecha = new Date(args.fecha_hora_iso);
       if (isNaN(fecha.getTime())) return { error: 'La fecha/hora no es válida.' };
       if (fecha < new Date()) return { error: 'Esa fecha ya pasó. Confirmale al usuario la fecha correcta antes de agendar.' };
@@ -1331,11 +1370,12 @@ async function ejecutarHerramienta(ctx, nombre, args) {
     case 'buscar_nota': {
       const encontradas = await notas.buscarNotas(args.busqueda || '');
       if (!encontradas.length) return { encontrado: false };
-      let msg = '📝 Encontré esto:\n\n';
-      encontradas.forEach((n) => { msg += `${n.fijada ? '📌 ' : ''}${n.titulo ? `${n.titulo}\n` : ''}${n.contenido}\n\n`; });
-      await ctx.reply(msg);
       session.setNotaActiva(ctx.chat.id, encontradas[0].id);
-      return { encontrado: true, cantidad: encontradas.length };
+      return {
+        encontrado: true,
+        cantidad: encontradas.length,
+        notas: encontradas.map((n) => ({ titulo: n.titulo || null, contenido: n.contenido, fijada: !!n.fijada, categoria: n.categoria || null })),
+      };
     }
     case 'listar_notas': {
       const lista = await notas.notasRecientes(15, !!args.incluir_completadas);
@@ -1396,6 +1436,24 @@ async function ejecutarHerramienta(ctx, nombre, args) {
     case 'eliminar_notas_completadas': {
       const cantidad = await notas.eliminarCompletadas();
       return { ok: true, cantidad };
+    }
+
+    // ---- REGLAS PERSONALIZADAS ----
+    case 'guardar_regla_personalizada': {
+      await reglas.guardarRegla(args.regla);
+      return { ok: true };
+    }
+    case 'listar_reglas_personalizadas': {
+      const lista = await reglas.listarReglas();
+      return { cantidad: lista.length, reglas: lista.map((r) => r.regla) };
+    }
+    case 'eliminar_regla_personalizada': {
+      const lista = await reglas.listarReglas();
+      const busqueda = (args.busqueda || '').toLowerCase();
+      const encontrada = lista.find((r) => r.regla.toLowerCase().includes(busqueda));
+      if (!encontrada) return { error: 'No encontré ninguna regla que coincida.' };
+      await reglas.eliminarRegla(encontrada.id);
+      return { ok: true };
     }
 
     // ---- CATÁLOGO DE SERVICIOS ----
