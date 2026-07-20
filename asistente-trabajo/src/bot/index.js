@@ -1,4 +1,5 @@
 const { Telegraf, Markup } = require('telegraf');
+const { fechaAR, primerDiaMesSiguiente, ultimoDiaMes } = require('../utils/fecha');
 const https = require('https');
 const session = require('./session');
 const { registrarAyuda } = require('./ayuda');
@@ -510,7 +511,7 @@ async function ejecutarHerramienta(ctx, nombre, args) {
       if (!plantilla) return { error: `No encontré ninguna plantilla llamada "${args.nombre_plantilla}".` };
       const creado = await presupuestos.crearPresupuesto({ cliente_id: cliente.id, items: plantilla.items });
       const vencimiento = new Date(); vencimiento.setDate(vencimiento.getDate() + 15);
-      await cobros.crearCobro({ cliente_id: cliente.id, presupuesto_id: creado.id, monto: creado.monto, fecha_vencimiento: vencimiento.toISOString().slice(0, 10) });
+      await cobros.crearCobro({ cliente_id: cliente.id, presupuesto_id: creado.id, monto: creado.monto, fecha_vencimiento: fechaAR(vencimiento) });
       session.setPresupuestoActivo(ctx.chat.id, creado.id);
       return { ok: true, items: creado.items.map((i) => ({ descripcion: i.descripcion, monto: i.monto })), total: creado.monto, cliente_id: cliente.id };
     }
@@ -521,7 +522,7 @@ async function ejecutarHerramienta(ctx, nombre, args) {
       const nuevo = await presupuestos.repetirPresupuesto(cliente.id, { monto: args.nuevo_monto });
       if (!nuevo) return { error: `${cliente.nombre} no tiene un presupuesto anterior para repetir.` };
       const vencimiento = new Date(); vencimiento.setDate(vencimiento.getDate() + 15);
-      await cobros.crearCobro({ cliente_id: cliente.id, presupuesto_id: nuevo.id, monto: nuevo.monto, fecha_vencimiento: vencimiento.toISOString().slice(0, 10) });
+      await cobros.crearCobro({ cliente_id: cliente.id, presupuesto_id: nuevo.id, monto: nuevo.monto, fecha_vencimiento: fechaAR(vencimiento) });
       session.setPresupuestoActivo(ctx.chat.id, nuevo.id);
       return { ok: true, items: nuevo.items.map((i) => ({ descripcion: i.descripcion, monto: i.monto })), total: nuevo.monto, cliente_id: cliente.id };
     }
@@ -532,7 +533,7 @@ async function ejecutarHerramienta(ctx, nombre, args) {
         if (!cliente || cliente.multiple) { resultados.push({ cliente_nombre: item.cliente_nombre, error: true }); continue; }
         const creado = await presupuestos.crearPresupuesto({ cliente_id: cliente.id, items: item.items });
         const vencimiento = new Date(); vencimiento.setDate(vencimiento.getDate() + 15);
-        await cobros.crearCobro({ cliente_id: cliente.id, presupuesto_id: creado.id, monto: creado.monto, fecha_vencimiento: vencimiento.toISOString().slice(0, 10) });
+        await cobros.crearCobro({ cliente_id: cliente.id, presupuesto_id: creado.id, monto: creado.monto, fecha_vencimiento: fechaAR(vencimiento) });
         resultados.push({ cliente_nombre: cliente.nombre, total: creado.monto, ok: true });
       }
       return { resultados };
@@ -550,8 +551,8 @@ async function ejecutarHerramienta(ctx, nombre, args) {
     }
     case 'consultar_tasa_conversion': {
       const mes = args.mes_iso || new Date().toISOString().slice(0, 7);
-      const desde = `${mes}-01T00:00:00.000Z`;
-      const finMes = new Date(`${mes}-01`); finMes.setMonth(finMes.getMonth() + 1);
+      const desde = `${mes}-01T00:00:00-03:00`;
+      const finMes = new Date(`${mes}-01T00:00:00-03:00`); finMes.setMonth(finMes.getMonth() + 1);
       const resultado = await presupuestos.tasaConversion(desde, finMes.toISOString());
       return resultado;
     }
@@ -566,8 +567,8 @@ async function ejecutarHerramienta(ctx, nombre, args) {
     }
     case 'exportar_mes_presupuestos': {
       const mes = args.mes_iso || new Date().toISOString().slice(0, 7);
-      const desde = `${mes}-01T00:00:00.000Z`;
-      const finMes = new Date(`${mes}-01`); finMes.setMonth(finMes.getMonth() + 1);
+      const desde = `${mes}-01T00:00:00-03:00`;
+      const finMes = new Date(`${mes}-01T00:00:00-03:00`); finMes.setMonth(finMes.getMonth() + 1);
       const lista = await presupuestos.presupuestosEnRango(desde, finMes.toISOString());
       if (!lista.length) { await ctx.reply(`No hay presupuestos en ${mes}.`); return { cantidad: 0 }; }
       const dias = [{ etiqueta: `Presupuestos de ${mes}`, items: lista.map((p) => ({ hora: '', texto: `${p.clientes?.nombre}: ${p.descripcion} - $${p.monto} [${p.estado}]` })) }];
@@ -693,7 +694,7 @@ async function ejecutarHerramienta(ctx, nombre, args) {
       const creado = await presupuestos.crearPresupuesto({ cliente_id: cliente.id, items, dias_validez: args.dias_validez || 15 });
       const vencimiento = new Date();
       vencimiento.setDate(vencimiento.getDate() + (args.dias_validez || 15));
-      const cobro = await cobros.crearCobro({ cliente_id: cliente.id, presupuesto_id: creado.id, monto: creado.monto, fecha_vencimiento: vencimiento.toISOString().slice(0, 10) });
+      const cobro = await cobros.crearCobro({ cliente_id: cliente.id, presupuesto_id: creado.id, monto: creado.monto, fecha_vencimiento: fechaAR(vencimiento) });
       session.setPresupuestoActivo(ctx.chat.id, creado.id);
       session.guardarUltimaAccion(ctx.chat.id, { tipo: 'crear_presupuesto', presupuesto_id: creado.id, cobro_id: cobro.id, descripcion: `presupuesto de ${cliente.nombre}` });
       if (!args.generar_pdf) {
@@ -885,7 +886,7 @@ async function ejecutarHerramienta(ctx, nombre, args) {
       const lista = await cobros.obtenerCobrosPorCliente(cliente.id);
       const pendiente = lista.find((c) => c.estado === 'pendiente');
       if (!pendiente) return { error: `${cliente.nombre} no tiene una deuda pendiente para dividir en cuotas.` };
-      const primeraFecha = args.primera_fecha_iso || new Date().toISOString().slice(0, 10);
+      const primeraFecha = args.primera_fecha_iso || fechaAR();
       const cuotas = await cobros.crearCuotas(pendiente.id, args.cantidad_cuotas, Number(pendiente.monto) - Number(pendiente.monto_pagado || 0), primeraFecha);
       session.setCobroActivo(ctx.chat.id, pendiente.id);
       return { ok: true, cuotas: cuotas.map((c) => ({ numero: c.numero_cuota, monto: c.monto, vence: c.fecha_vencimiento })) };
@@ -950,10 +951,9 @@ async function ejecutarHerramienta(ctx, nombre, args) {
       return { total_pendiente: totalPendiente, cobrado_hoy_por_metodo: caja, proyeccion_15_dias: proyeccion };
     }
     case 'consultar_reporte_metodo_pago': {
-      const mes = args.mes_iso || new Date().toISOString().slice(0, 7);
+      const mes = args.mes_iso || fechaAR().slice(0, 7);
       const desde = `${mes}-01`;
-      const finMes = new Date(desde); finMes.setMonth(finMes.getMonth() + 1);
-      const porMetodo = await cobros.reportePorMetodo(desde, finMes.toISOString().slice(0, 10));
+      const porMetodo = await cobros.reportePorMetodo(desde, primerDiaMesSiguiente(mes));
       return { por_metodo: porMetodo };
     }
     case 'generar_mensaje_reclamo': {
@@ -972,8 +972,8 @@ async function ejecutarHerramienta(ctx, nombre, args) {
     }
     case 'exportar_cobros_mes': {
       const mes = args.mes_iso || new Date().toISOString().slice(0, 7);
-      const desde = `${mes}-01T00:00:00.000Z`;
-      const finMes = new Date(`${mes}-01`); finMes.setMonth(finMes.getMonth() + 1);
+      const desde = `${mes}-01T00:00:00-03:00`;
+      const finMes = new Date(`${mes}-01T00:00:00-03:00`); finMes.setMonth(finMes.getMonth() + 1);
       const lista = await cobros.cobrosEnRango(desde, finMes.toISOString());
       if (!lista.length) { await ctx.reply(`No hay cobros registrados en ${mes}.`); return { cantidad: 0 }; }
       const dias = [{ etiqueta: `Cobros de ${mes}`, items: lista.map((c) => ({ hora: '', texto: `${c.clientes?.nombre}: $${c.monto} [${c.estado}]${c.metodo_pago ? ' - ' + c.metodo_pago : ''}` })) }];
@@ -1037,7 +1037,7 @@ async function ejecutarHerramienta(ctx, nombre, args) {
       const posibleDuplicado = existentes.find((e) => e.tipo.toLowerCase() === (args.tipo || '').toLowerCase());
       const activo = await presupuestos.obtenerUltimoPresupuesto(cliente.id);
       const equipo = await equipos.registrarEquipo({
-        cliente_id: cliente.id, tipo: args.tipo, fecha_instalacion: new Date().toISOString().slice(0, 10),
+        cliente_id: cliente.id, tipo: args.tipo, fecha_instalacion: fechaAR(),
         meses_para_mantenimiento: args.meses_mantenimiento || null, aviso_automatico: !!args.aviso_automatico,
         marca: args.marca, modelo: args.modelo, numero_serie: args.numero_serie,
         garantia_fabrica_meses: args.garantia_fabrica_meses, vida_util_anios: args.vida_util_anios,
@@ -1164,14 +1164,14 @@ async function ejecutarHerramienta(ctx, nombre, args) {
       const cobrosCliente = await cobros.obtenerCobrosPorCliente(cliente.id);
       const deudaPendiente = cobrosCliente.find((c) => c.estado === 'pendiente');
       const equiposCliente = await equipos.equiposPorCliente(cliente.id);
-      const hoy = new Date().toISOString().slice(0, 10);
+      const hoy = fechaAR();
       const enUnMes = new Date(); enUnMes.setMonth(enUnMes.getMonth() + 1);
-      const mantenimientoProximo = equiposCliente.find((e) => e.proximo_mantenimiento && e.proximo_mantenimiento <= enUnMes.toISOString().slice(0, 10));
+      const mantenimientoProximo = equiposCliente.find((e) => e.proximo_mantenimiento && e.proximo_mantenimiento <= fechaAR(enUnMes));
 
       return {
         ok: true,
         cliente_id: cliente.id,
-        choque_de_horario: cercanas.length > 0 ? cercanas.map((v) => `${v.clientes?.nombre} a las ${new Date(v.fecha_hora).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}`) : null,
+        choque_de_horario: cercanas.length > 0 ? cercanas.map((v) => `${v.clientes?.nombre} a las ${new Date(v.fecha_hora).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Argentina/Buenos_Aires' })}`) : null,
         choque_horario_bloqueado: choqueBloqueado ? choqueBloqueado.descripcion || 'horario bloqueado' : null,
         visitas_ese_dia: totalDelDia,
         dia_cargado: totalDelDia >= 4,
@@ -1213,8 +1213,8 @@ async function ejecutarHerramienta(ctx, nombre, args) {
         lista.map(async (v) => {
           const activo = await presupuestos.obtenerUltimoPresupuesto(v.cliente_id);
           return {
-            fecha: new Date(v.fecha_hora).toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'numeric' }),
-            hora: new Date(v.fecha_hora).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }),
+            fecha: new Date(v.fecha_hora).toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'numeric', timeZone: 'America/Argentina/Buenos_Aires' }),
+            hora: new Date(v.fecha_hora).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Argentina/Buenos_Aires' }),
             cliente: v.clientes?.nombre,
             direccion: v.clientes?.direccion || null,
             descripcion: v.descripcion,
@@ -1253,9 +1253,9 @@ async function ejecutarHerramienta(ctx, nombre, args) {
       const lista = await visitas.visitasEnRango(desde, hasta);
       const porDia = {};
       lista.forEach((v) => {
-        const clave = new Date(v.fecha_hora).toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'numeric' });
+        const clave = new Date(v.fecha_hora).toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'numeric', timeZone: 'America/Argentina/Buenos_Aires' });
         if (!porDia[clave]) porDia[clave] = [];
-        porDia[clave].push({ hora: new Date(v.fecha_hora).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }), texto: `${v.clientes?.nombre}: ${v.descripcion}` });
+        porDia[clave].push({ hora: new Date(v.fecha_hora).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Argentina/Buenos_Aires' }), texto: `${v.clientes?.nombre}: ${v.descripcion}` });
       });
       const dias = Object.keys(porDia).map((etiqueta) => ({ etiqueta, items: porDia[etiqueta] }));
       const buffer = await pdf.generarAgendaPdf({ titulo: `Agenda - ${rango}`, dias });
@@ -1297,9 +1297,9 @@ async function ejecutarHerramienta(ctx, nombre, args) {
       const { desde, hasta } = rangoFechas('hoy');
       const visitasHoy = await visitas.visitasEnRango(desde, hasta);
       const cobrosPend = await cobros.cobrosPendientes();
-      const cobrosHoy = cobrosPend.filter((c) => c.fecha_vencimiento === new Date().toISOString().slice(0, 10));
+      const cobrosHoy = cobrosPend.filter((c) => c.fecha_vencimiento === fechaAR());
       return {
-        visitas_hoy: visitasHoy.map((v) => ({ hora: new Date(v.fecha_hora).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }), cliente: v.clientes?.nombre, descripcion: v.descripcion })),
+        visitas_hoy: visitasHoy.map((v) => ({ hora: new Date(v.fecha_hora).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Argentina/Buenos_Aires' }), cliente: v.clientes?.nombre, descripcion: v.descripcion })),
         cobros_que_vencen_hoy: cobrosHoy.map((c) => ({ cliente: c.clientes?.nombre, monto: c.monto })),
       };
     }
@@ -1330,8 +1330,8 @@ async function ejecutarHerramienta(ctx, nombre, args) {
       const { desde, hasta } = rangoFechas(rango, args.fecha_iso);
       const lista = await recordatorios.recordatoriosEnRango(desde, hasta);
       const items = lista.map((r) => ({
-        fecha: new Date(r.fecha_hora).toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'numeric' }),
-        hora: new Date(r.fecha_hora).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }),
+        fecha: new Date(r.fecha_hora).toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'numeric', timeZone: 'America/Argentina/Buenos_Aires' }),
+        hora: new Date(r.fecha_hora).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Argentina/Buenos_Aires' }),
         texto: r.texto,
       }));
       return { cantidad: items.length, recordatorios: items };
@@ -1568,12 +1568,9 @@ async function ejecutarHerramienta(ctx, nombre, args) {
       return { ok: true, cliente_id: cliente.id };
     }
     case 'generar_bitacora': {
-      const mes = args.mes_iso || new Date().toISOString().slice(0, 7);
+      const mes = args.mes_iso || fechaAR().slice(0, 7);
       const desde = `${mes}-01`;
-      const finMes = new Date(desde);
-      finMes.setMonth(finMes.getMonth() + 1);
-      finMes.setDate(0);
-      const lista = await trabajos.trabajosEnRango(desde, finMes.toISOString().slice(0, 10));
+      const lista = await trabajos.trabajosEnRango(desde, ultimoDiaMes(mes));
       if (!lista.length) { await ctx.reply(`No hay trabajos registrados en ${mes}.`); return { cantidad: 0 }; }
       const buffer = await pdf.generarBitacora({ titulo: `Bitácora - ${mes}`, trabajos: lista });
       await enviarDocumentoConReintento(ctx, { source: buffer, filename: `bitacora-${mes}.pdf` });
@@ -1581,8 +1578,8 @@ async function ejecutarHerramienta(ctx, nombre, args) {
     }
     case 'consultar_reporte_mensual': {
       const mes = args.mes_iso || new Date().toISOString().slice(0, 7);
-      const desde = `${mes}-01T00:00:00.000Z`;
-      const finMes = new Date(`${mes}-01`);
+      const desde = `${mes}-01T00:00:00-03:00`;
+      const finMes = new Date(`${mes}-01T00:00:00-03:00`);
       finMes.setMonth(finMes.getMonth() + 1);
       const lista = await cobros.cobrosEnRango(desde, finMes.toISOString());
       const facturado = lista.reduce((acc, c) => acc + Number(c.monto), 0);
@@ -1743,7 +1740,7 @@ async function pasoPresupuesto(ctx, estado, texto) {
     const items = [{ descripcion: estado.datos.descripcion, monto }];
     const creado = await presupuestos.crearPresupuesto({ cliente_id: estado.datos.cliente.id, items });
     const vencimiento = new Date(); vencimiento.setDate(vencimiento.getDate() + 15);
-    await cobros.crearCobro({ cliente_id: estado.datos.cliente.id, presupuesto_id: creado.id, monto: creado.monto, fecha_vencimiento: vencimiento.toISOString().slice(0, 10) });
+    await cobros.crearCobro({ cliente_id: estado.datos.cliente.id, presupuesto_id: creado.id, monto: creado.monto, fecha_vencimiento: fechaAR(vencimiento) });
     const buffer = await pdf.generarPresupuesto({ cliente: estado.datos.cliente, items, numero: numFmt(creado.numero) });
     session.limpiar(ctx.chat.id);
     await enviarDocumentoConReintento(ctx, { source: buffer, filename: `presupuesto-${estado.datos.cliente.nombre}.pdf` });
@@ -1795,7 +1792,7 @@ async function pasoEquipo(ctx, estado, texto) {
   if (estado.paso === 'meses') {
     estado.datos.meses = texto.toLowerCase() === 'no' ? null : parseInt(texto, 10);
     if (!estado.datos.meses) {
-      await equipos.registrarEquipo({ cliente_id: estado.datos.cliente.id, tipo: estado.datos.tipo, fecha_instalacion: new Date().toISOString().slice(0, 10) });
+      await equipos.registrarEquipo({ cliente_id: estado.datos.cliente.id, tipo: estado.datos.tipo, fecha_instalacion: fechaAR() });
       session.limpiar(ctx.chat.id);
       return ctx.reply('Equipo registrado. ✅');
     }
@@ -1804,7 +1801,7 @@ async function pasoEquipo(ctx, estado, texto) {
   }
   if (estado.paso === 'aviso') {
     const automatico = texto.toLowerCase().includes('cliente');
-    const equipo = await equipos.registrarEquipo({ cliente_id: estado.datos.cliente.id, tipo: estado.datos.tipo, fecha_instalacion: new Date().toISOString().slice(0, 10), meses_para_mantenimiento: estado.datos.meses, aviso_automatico: automatico });
+    const equipo = await equipos.registrarEquipo({ cliente_id: estado.datos.cliente.id, tipo: estado.datos.tipo, fecha_instalacion: fechaAR(), meses_para_mantenimiento: estado.datos.meses, aviso_automatico: automatico });
     session.limpiar(ctx.chat.id);
     return ctx.reply(`Mantenimiento programado para ${equipo.proximo_mantenimiento}, y se repite solo cada ${estado.datos.meses} meses. ✅`, Markup.removeKeyboard());
   }
@@ -1837,20 +1834,20 @@ async function enviarAgendaDelDia(chatId) {
   } else {
     msg += `Tenés ${visitasHoy.length} trabajo(s) agendado(s)${recs.length ? ` y ${recs.length} recordatorio(s)` : ''}.\n\n`;
     for (const v of visitasHoy) {
-      let linea = `🔧 ${new Date(v.fecha_hora).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })} - ${v.clientes?.nombre}: ${v.descripcion}${v.clientes?.direccion ? ' (' + v.clientes.direccion + ')' : ''}`;
+      let linea = `🔧 ${new Date(v.fecha_hora).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Argentina/Buenos_Aires' })} - ${v.clientes?.nombre}: ${v.descripcion}${v.clientes?.direccion ? ' (' + v.clientes.direccion + ')' : ''}`;
       const pendientesCliente = await cobros.obtenerCobrosPorCliente(v.cliente_id);
       const deuda = pendientesCliente.find((c) => c.estado === 'pendiente');
       if (deuda) linea += ` — 💰 debe $${Number(deuda.monto) - Number(deuda.monto_pagado || 0)}`;
       if (v.que_llevar) linea += `\n   📦 Llevar: ${v.que_llevar}`;
       msg += linea + '\n';
     }
-    recs.forEach((r) => { msg += `⏰ ${new Date(r.fecha_hora).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })} - ${r.texto}\n`; });
+    recs.forEach((r) => { msg += `⏰ ${new Date(r.fecha_hora).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Argentina/Buenos_Aires' })} - ${r.texto}\n`; });
     mants.forEach((m) => { msg += `🔧 Mantenimiento: ${m.tipo} de ${m.clientes?.nombre}${m.aviso_automatico ? ' (se le avisa solo)' : ' (contactalo vos)'}\n`; });
 
     if (visitasHoy.length) {
       msg += '\n💬 Mensajes listos para confirmarle a cada cliente:\n\n';
       visitasHoy.forEach((v) => {
-        const hora = new Date(v.fecha_hora).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
+        const hora = new Date(v.fecha_hora).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Argentina/Buenos_Aires' });
         msg += `Para ${v.clientes?.nombre}${v.clientes?.telefono ? ' (' + v.clientes.telefono + ')' : ''}:\n"Hola ${v.clientes?.nombre}! Te confirmo que hoy paso a las ${hora} para ${v.descripcion}. Cualquier cosa avisame."\n\n`;
       });
     }
