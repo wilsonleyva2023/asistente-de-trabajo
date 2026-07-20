@@ -1,4 +1,5 @@
 const { supabase } = require('../db');
+const { fechaAR } = require('../utils/fecha');
 
 // ---- Kit de herramientas habituales ----
 async function agregarAlKit(nombre) {
@@ -23,7 +24,7 @@ async function marcarEstado(nombre, estado, notas) {
 }
 
 async function registrarMantenimiento(nombre) {
-  const { error } = await supabase.from('herramientas_kit').update({ ultimo_mantenimiento: new Date().toISOString().slice(0, 10) }).ilike('nombre', `%${nombre}%`);
+  const { error } = await supabase.from('herramientas_kit').update({ ultimo_mantenimiento: fechaAR() }).ilike('nombre', `%${nombre}%`);
   if (error) throw error;
 }
 
