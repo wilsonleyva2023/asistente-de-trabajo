@@ -1,4 +1,5 @@
 const { supabase } = require('../db');
+const { fechaAR } = require('../utils/fecha');
 
 async function registrarTrabajo({ cliente_id, presupuesto_id, descripcion, gasto_materiales, garantia_dias }) {
   const dias = garantia_dias || 90;
@@ -13,7 +14,7 @@ async function registrarTrabajo({ cliente_id, presupuesto_id, descripcion, gasto
         descripcion,
         gasto_materiales: gasto_materiales || 0,
         garantia_dias: dias,
-        garantia_vencimiento: vencimiento.toISOString().slice(0, 10),
+        garantia_vencimiento: fechaAR(vencimiento),
       },
     ])
     .select()
@@ -52,14 +53,14 @@ async function trabajosPorCliente(cliente_id) {
 }
 
 async function garantiasPorVencer(diasAntes = 5) {
-  const hoy = new Date().toISOString().slice(0, 10);
+  const hoy = fechaAR();
   const limite = new Date();
   limite.setDate(limite.getDate() + diasAntes);
   const { data, error } = await supabase
     .from('trabajos')
     .select('*, clientes(nombre, telefono)')
     .gte('garantia_vencimiento', hoy)
-    .lte('garantia_vencimiento', limite.toISOString().slice(0, 10));
+    .lte('garantia_vencimiento', fechaAR(limite));
   if (error) throw error;
   return data;
 }
@@ -86,7 +87,7 @@ async function registrarSatisfaccion(trabajo_id, satisfaccion) {
 async function trabajosRepetidos(cliente_id, meses = 6) {
   const limite = new Date();
   limite.setMonth(limite.getMonth() - meses);
-  const { data, error } = await supabase.from('trabajos').select('*').eq('cliente_id', cliente_id).gte('fecha', limite.toISOString().slice(0, 10));
+  const { data, error } = await supabase.from('trabajos').select('*').eq('cliente_id', cliente_id).gte('fecha', fechaAR(limite));
   if (error) throw error;
   return data;
 }
