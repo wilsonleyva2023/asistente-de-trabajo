@@ -130,8 +130,8 @@ async function revisarMantenimientos(chatId) {
 async function revisarAvisosDeVisitas(chatId) {
   const lista = await visitas.visitasParaAvisar();
   for (const v of lista) {
-    const hora = new Date(v.fecha_hora).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
-    const fecha = new Date(v.fecha_hora).toLocaleDateString('es-AR');
+    const hora = new Date(v.fecha_hora).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Argentina/Buenos_Aires' });
+    const fecha = new Date(v.fecha_hora).toLocaleDateString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' });
     await bot.telegram.sendMessage(chatId, `⏰ Recordatorio: tenés una visita con ${v.clientes?.nombre} el ${fecha} a las ${hora} — ${v.descripcion}`);
     await visitas.marcarAvisada(v.id);
   }
