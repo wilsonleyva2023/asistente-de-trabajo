@@ -21,16 +21,30 @@ async function editarNota(id, cambios) {
 }
 
 async function buscarNotas(busqueda) {
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from('notas')
     .select('*')
     .eq('archivada', false)
-    .or(`titulo.ilike.%${busqueda}%,contenido.ilike.%${busqueda}%`)
+    .or(`titulo.ilike.%${busqueda}%,contenido.ilike.%${busqueda}%,categoria.ilike.%${busqueda}%`)
     .order('fijada', { ascending: false })
     .order('creado_en', { ascending: false })
     .limit(5);
   if (error) throw error;
-  return data;
+  if (data && data.length) return data;
+
+  // Si no hubo match exacto, probamos por cada palabra suelta
+  const palabras = busqueda.split(/\s+/).filter((p) => p.length > 2);
+  for (const p of palabras) {
+    const { data: data2 } = await supabase
+      .from('notas')
+      .select('*')
+      .eq('archivada', false)
+      .or(`titulo.ilike.%${p}%,contenido.ilike.%${p}%,categoria.ilike.%${p}%`)
+      .order('fijada', { ascending: false })
+      .limit(5);
+    if (data2 && data2.length) return data2;
+  }
+  return [];
 }
 
 // Lista solo las activas (no completadas, no archivadas) por defecto
@@ -49,9 +63,18 @@ async function notasEnRango(desdeISO, hastaISO) {
 }
 
 async function notasPorCategoria(categoria) {
-  const { data, error } = await supabase.from('notas').select('*').eq('archivada', false).ilike('categoria', `%${categoria}%`);
+  // Primero intento exacto/substring; si no hay nada, busco por cada palabra suelta (tolera "compra" vs "compras de plomería")
+  let { data, error } = await supabase.from('notas').select('*').eq('archivada', false).ilike('categoria', `%${categoria}%`);
   if (error) throw error;
-  return data;
+  if (data && data.length) return data;
+
+  const palabras = categoria.split(/\s+/).filter((p) => p.length > 2);
+  if (!palabras.length) return [];
+  let query = supabase.from('notas').select('*').eq('archivada', false);
+  palabras.forEach((p) => { query = query.ilike('categoria', `%${p}%`); });
+  const { data: data2, error: error2 } = await query;
+  if (error2) throw error2;
+  return data2 || [];
 }
 
 async function notasPorCliente(cliente_id) {
