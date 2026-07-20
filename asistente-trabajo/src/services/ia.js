@@ -3,13 +3,19 @@
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const MODELO = 'gemini-3.1-flash-lite';
 const URL_API = `https://generativelanguage.googleapis.com/v1beta/models/${MODELO}:generateContent?key=${GEMINI_API_KEY}`;
+const reglas = require('./reglas');
 
-const INSTRUCCION_SISTEMA = `Sos el asistente personal de un técnico argentino (plomería, gas, electricidad, aire, cámaras). Hablás de vos, español rioplatense, cercano y directo, sin formalismos.
+function obtenerInstruccionSistema(reglasTexto) {
+  return `Sos el asistente personal de un técnico argentino (plomería, gas, electricidad, aire, cámaras). Hablás de vos, español rioplatense, cercano y directo, sin formalismos.
 
 Gestionás: clientes, presupuestos, recibos, trabajos, equipos, agenda, cobros, notas, catálogo de servicios y herramientas propias.
 
 GENERAL:
 - REGLA ABSOLUTA, la más importante de todas: NUNCA muestres un nombre, dato, cliente, monto o fecha que no venga literalmente en el resultado de una herramienta o en lo que el usuario escribió. Si una herramienta te devuelve una lista, tu respuesta debe listar EXACTAMENTE esos elementos, ni uno más — nunca "completes" la lista con ejemplos, nombres típicos, ni nada inventado, aunque parezca útil o quede prolijo. Si la lista está vacía o corta, decilo tal cual, no la rellenes. Ante la duda de si un dato es real o lo estás completando de memoria, no lo digas.
+- NUNCA calcules ni compongas vos mismo un número de plata, un total, o un resumen financiero. Si el usuario pide algo (un período, una comparación) para el que no hay una herramienta exacta, decilo claramente ("no tengo armada esa consulta puntual todavía") y ofrecé la opción más parecida que sí exista — no inventes una cifra que "suene razonable".
+- Si al intentar algo una herramienta no encuentra resultado, no la vuelvas a llamar más de una vez con el mismo dato esperando que cambie — si falla dos veces seguidas, parate y preguntale al usuario en vez de seguir intentando solo.
+- Si el usuario te pide que sigas una regla de comportamiento "siempre" o "de ahora en más" (formato de un dato, tono de las respuestas, cualquier costumbre), usá guardar_regla_personalizada para que quede guardado de verdad, no lo prometas solo de palabra — una promesa sin guardar se pierde en cualquier reinicio del sistema.
+- Si el usuario menciona un detalle que no tiene dónde guardarse en ningún campo existente (ej: una condición especial de un equipo, una aclaración suelta), guardalo como nota ligada a ese cliente con guardar_nota en vez de dejarlo pasar sin registrar nada.
 - Si el usuario pide una acción sobre un cliente y el nombre que dio no encuentra resultados exactos, usá buscar_cliente para confirmar qué existe realmente antes de probar con otras herramientas al azar (como buscar por categoría) — no adivines ni pruebes herramientas que no tienen que ver con lo que se pidió.
 - Priorizá usar una herramienta si el pedido encaja. Si falta un dato obligatorio, preguntalo.
 - Fuera de herramientas: si es sobre su oficio/negocio (dudas técnicas, cálculos, redactar mensajes), respondé directo y breve. Si es totalmente ajeno, redirigí amablemente a lo que podés hacer.
@@ -64,7 +70,11 @@ FOTOS/AUDIO/DOCUMENTOS: sin instrucción clara, decidí según contexto reciente
 
 FORMATO (Telegram, sin markdown): nunca ** ni _; listas con • ; emojis con moderación (✅📋💰📅🔧⚠️📝); frases cortas tipo WhatsApp.
 
-Fecha y hora actuales en Argentina: ${new Date().toLocaleString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires', dateStyle: 'full', timeStyle: 'short' })} (usá siempre esta hora como referencia de "ahora", nunca calcules en otro huso horario)`;
+Fecha y hora actuales en Argentina: ${new Date().toLocaleString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires', dateStyle: 'full', timeStyle: 'short' })} (usá siempre esta hora como referencia de "ahora", nunca calcules en otro huso horario, y tené en cuenta que se recalcula en cada mensaje, así que siempre está actualizada)
+
+REGLAS PERSONALIZADAS QUE EL USUARIO PIDIÓ QUE SIGAS SIEMPRE:
+${reglasTexto || '(ninguna guardada todavía)'}`;
+}
 
 const ITEM_SCHEMA = { type: 'OBJECT', properties: { descripcion: { type: 'STRING' }, monto: { type: 'NUMBER' } }, required: ['descripcion', 'monto'] };
 const CID = { type: 'STRING', description: 'ID exacto del cliente si ya se identificó en esta charla (evita ambigüedad).' };
@@ -97,6 +107,7 @@ const HERRAMIENTAS = [
             relacion: { type: 'STRING', description: 'Relación con otro cliente si la menciona (ej: "padre de Jennifer").' },
             descuento_habitual: { type: 'NUMBER', description: 'Porcentaje de descuento habitual, si lo menciona.' },
             contacto_secundario: { type: 'STRING', description: 'Otro contacto del mismo cliente (ej: encargado, familiar), nombre y teléfono.' },
+            confirmado_no_duplicado: { type: 'BOOLEAN', description: 'Poné true SOLO si ya le preguntaste al usuario por un posible duplicado y confirmó que es una persona distinta.' },
           },
           required: ['nombre'],
         },
@@ -862,6 +873,23 @@ const HERRAMIENTAS = [
         parameters: { type: 'OBJECT', properties: {} },
       },
 
+      // ---- REGLAS PERSONALIZADAS ----
+      {
+        name: 'guardar_regla_personalizada',
+        description: 'Guarda una regla de comportamiento que el usuario pide que sigas SIEMPRE de ahora en más (ej: formato de direcciones, tono de las respuestas). Queda guardada permanentemente, no solo en esta charla.',
+        parameters: { type: 'OBJECT', properties: { regla: { type: 'STRING', description: 'La regla en una frase clara y accionable.' } }, required: ['regla'] },
+      },
+      {
+        name: 'listar_reglas_personalizadas',
+        description: 'Muestra todas las reglas permanentes guardadas.',
+        parameters: { type: 'OBJECT', properties: {} },
+      },
+      {
+        name: 'eliminar_regla_personalizada',
+        description: 'Borra una regla permanente guardada, buscándola por texto.',
+        parameters: { type: 'OBJECT', properties: { busqueda: { type: 'STRING' } }, required: ['busqueda'] },
+      },
+
       // ---- CATÁLOGO DE SERVICIOS ----
       {
         name: 'guardar_servicio_catalogo',
@@ -1047,7 +1075,8 @@ const HERRAMIENTAS = [
 ];
 
 async function llamarGemini(contents) {
-  const body = { system_instruction: { parts: [{ text: INSTRUCCION_SISTEMA }] }, contents, tools: HERRAMIENTAS, generationConfig: { temperature: 0.3 } };
+  const reglasTexto = await reglas.textoReglas().catch(() => null);
+  const body = { system_instruction: { parts: [{ text: obtenerInstruccionSistema(reglasTexto) }] }, contents, tools: HERRAMIENTAS, generationConfig: { temperature: 0.3 } };
   const resp = await fetch(URL_API, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   if (!resp.ok) throw new Error(`Error de Gemini (${resp.status}): ${await resp.text()}`);
   const data = await resp.json();
