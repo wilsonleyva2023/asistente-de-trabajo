@@ -444,15 +444,20 @@ async function ejecutarHerramienta(ctx, nombre, args) {
       return { ok: true, cliente_id: actualizado.id, nombre: actualizado.nombre };
     }
     case 'eliminar_cliente': {
-      const cliente = await resolverCliente(ctx, args);
-      if (!cliente) return errorClienteNoEncontrado(args.cliente_nombre);
+      let cliente = await resolverCliente(ctx, args);
+      if (!cliente) {
+        // No está entre los activos: puede que ya esté archivado, lo buscamos ahí también.
+        const archivado = await clientes.buscarClienteArchivado(args.cliente_nombre || '');
+        if (!archivado) return errorClienteNoEncontrado(args.cliente_nombre);
+        cliente = archivado;
+      }
       if (cliente.multiple) return errorClienteAmbiguo(cliente.opciones);
       if (args.permanente) {
         await clientes.eliminarClientePermanente(cliente.id);
-        return { ok: true, mensaje: `Cliente ${cliente.nombre} borrado definitivamente.` };
+        return { ok: true, mensaje: `Cliente ${cliente.nombre} borrado definitivamente. Confirmado: es un borrado real y permanente.` };
       }
       await clientes.archivarCliente(cliente.id);
-      return { ok: true, mensaje: `Cliente ${cliente.nombre} borrado (se puede restaurar).` };
+      return { ok: true, mensaje: `Cliente ${cliente.nombre} borrado de forma TEMPORAL (se puede restaurar). No es un borrado definitivo.` };
     }
     case 'restaurar_cliente': {
       const archivado = await clientes.buscarClienteArchivado(args.cliente_nombre || '');
@@ -484,19 +489,21 @@ async function ejecutarHerramienta(ctx, nombre, args) {
       return { ok: true, mensaje: `Se unió todo el historial de "${aFusionar[0].nombre}" dentro de "${aConservar[0].nombre}".` };
     }
     case 'diagnosticar_clientes_por_nombre': {
-      const lista = await clientes.buscarClientesPorNombre(args.nombre || '');
-      if (!lista.length) return { cantidad: 0 };
+      const activos = await clientes.buscarClientesPorNombre(args.nombre || '');
+      const archivados = await clientes.buscarClientesArchivadosPorNombre(args.nombre || '');
+      const todos = [...activos.map((c) => ({ ...c, estado: 'activo' })), ...archivados.map((c) => ({ ...c, estado: 'archivado (borrado temporal)' }))];
+      if (!todos.length) return { cantidad: 0 };
       const detalle = [];
-      for (const c of lista) {
+      for (const c of todos) {
         const visita = await visitas.proximaVisitaPendiente(c.id);
         const presupuesto = await presupuestos.obtenerUltimoPresupuesto(c.id);
         detalle.push({
-          id: c.id, nombre: c.nombre, telefono: c.telefono || 'sin teléfono', direccion: c.direccion || 'sin dirección',
+          id: c.id, nombre: c.nombre, estado: c.estado, telefono: c.telefono || 'sin teléfono', direccion: c.direccion || 'sin dirección',
           creado: c.creado_en, visita_pendiente: visita ? `${visita.fecha_hora}` : null,
           presupuesto_activo: presupuesto ? `${presupuesto.descripcion} $${presupuesto.monto}` : null,
         });
       }
-      return { cantidad: lista.length, clientes: detalle };
+      return { cantidad: todos.length, clientes: detalle };
     }
     case 'agregar_direccion_cliente': {
       const cliente = await resolverCliente(ctx, args);
@@ -800,14 +807,23 @@ async function ejecutarHerramienta(ctx, nombre, args) {
     }
     case 'eliminar_presupuesto': {
       const r = await resolverClienteConPresupuesto(args);
-      if (r.error) return r;
-      const { presupuesto: ultimo } = r;
+      let ultimo;
+      if (r.error) {
+        // No hay uno activo: puede que ya esté archivado, buscamos ahí antes de rendirnos.
+        const cliente = await resolverCliente(ctx, args);
+        if (!cliente || cliente.multiple) return r;
+        const archivado = await presupuestos.ultimoArchivado(cliente.id);
+        if (!archivado) return r;
+        ultimo = archivado;
+      } else {
+        ultimo = r.presupuesto;
+      }
       if (args.permanente) {
         await presupuestos.eliminarPresupuestoPermanente(ultimo.id);
-        return { ok: true, mensaje: 'Presupuesto borrado definitivamente.' };
+        return { ok: true, mensaje: 'Presupuesto borrado definitivamente. Confirmado: es un borrado real y permanente.' };
       }
       await presupuestos.archivarPresupuesto(ultimo.id);
-      return { ok: true, mensaje: 'Presupuesto borrado (se puede restaurar). La deuda asociada también se canceló.' };
+      return { ok: true, mensaje: 'Presupuesto borrado de forma TEMPORAL (se puede restaurar). La deuda asociada también se canceló. No es un borrado definitivo.' };
     }
     case 'restaurar_presupuesto': {
       const cliente = await resolverCliente(ctx, args);
