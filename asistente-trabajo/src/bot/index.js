@@ -729,7 +729,10 @@ async function ejecutarHerramienta(ctx, nombre, args) {
       if (cliente.bloqueado) return { error: `${cliente.nombre} está marcado como cliente bloqueado ("no volver a atender"). Confirmale al usuario si igual quiere seguir antes de continuar.` };
       const items = args.items && args.items.length ? args.items : [];
       if (!items.length) return { error: 'No se especificaron ítems para el presupuesto.' };
-      const creado = await presupuestos.crearPresupuesto({ cliente_id: cliente.id, items, dias_validez: args.dias_validez || 15 });
+      const creado = await presupuestos.crearPresupuesto({
+        cliente_id: cliente.id, items, dias_validez: args.dias_validez || 15,
+        alcance_texto: args.alcance_texto, garantia_texto: args.garantia_texto, forma_pago_texto: args.forma_pago_texto,
+      });
       const vencimiento = new Date();
       vencimiento.setDate(vencimiento.getDate() + (args.dias_validez || 15));
       const cobro = await cobros.crearCobro({ cliente_id: cliente.id, presupuesto_id: creado.id, monto: creado.monto, fecha_vencimiento: fechaAR(vencimiento) });
@@ -779,6 +782,9 @@ async function ejecutarHerramienta(ctx, nombre, args) {
       const cambios = {};
       if (args.nuevo_monto) cambios.monto = args.nuevo_monto;
       if (args.nueva_descripcion) cambios.descripcion = args.nueva_descripcion;
+      if (args.nuevo_alcance) cambios.alcance_texto = args.nuevo_alcance;
+      if (args.nueva_garantia) cambios.garantia_texto = args.nueva_garantia;
+      if (args.nueva_forma_pago) cambios.forma_pago_texto = args.nueva_forma_pago;
       if (!Object.keys(cambios).length) return { error: 'No se especificó qué cambiar.' };
       const actualizado = await presupuestos.actualizarPresupuesto(ultimo.id, cambios);
       return { ok: true, descripcion: actualizado.descripcion, monto: actualizado.monto, cliente_id: cliente.id };
@@ -798,9 +804,10 @@ async function ejecutarHerramienta(ctx, nombre, args) {
       const { cliente, presupuesto: ultimo } = r;
       const items = ultimo.presupuesto_items?.filter((i) => !i.archivado) || [{ descripcion: ultimo.descripcion, monto: ultimo.monto }];
       const buffer = await pdf.generarPresupuesto({
-        cliente, items, numero: numFmt(ultimo.numero), direccionTrabajo: args.direccion_trabajo, alcance: args.alcance_texto,
-        incluirAlcance: args.incluir_alcance !== false, garantia: args.garantia_texto, incluirGarantia: args.incluir_garantia !== false,
-        formaPago: args.forma_pago_texto, incluirFormaPago: args.incluir_forma_pago !== false,
+        cliente, items, numero: numFmt(ultimo.numero), diasValidez: ultimo.dias_validez, direccionTrabajo: args.direccion_trabajo,
+        alcance: args.alcance_texto || ultimo.alcance_texto, incluirAlcance: args.incluir_alcance !== false,
+        garantia: args.garantia_texto || ultimo.garantia_texto, incluirGarantia: args.incluir_garantia !== false,
+        formaPago: args.forma_pago_texto || ultimo.forma_pago_texto, incluirFormaPago: args.incluir_forma_pago !== false,
       });
       await enviarDocumentoConReintento(ctx, { source: buffer, filename: `presupuesto-${cliente.nombre}.pdf` });
       return { ok: true, cliente_id: cliente.id };
@@ -859,19 +866,23 @@ async function ejecutarHerramienta(ctx, nombre, args) {
         }
       }
       if (!concepto && !monto && !items) return { error: `Faltan datos y ${cliente.nombre} no tiene presupuesto activo. Preguntale al usuario.` };
-      const registrado = await recibos.crearRecibo({ cliente_id: cliente.id, concepto, monto, es_pago_parcial: !!args.es_pago_parcial });
-      const buffer = await pdf.generarRecibo({ cliente, items, monto, concepto, numero: numFmt(registrado.numero), esPagoParcial: !!args.es_pago_parcial });
-      await enviarDocumentoConReintento(ctx, { source: buffer, filename: `recibo-${cliente.nombre}.pdf` });
+
+      // Primero saldamos/actualizamos la deuda real, así sabemos con certeza si quedó completa o parcial
+      // ANTES de armar el PDF — nunca dependemos de que la IA adivine cuál de las dos es.
       const cobrosCliente = await cobros.obtenerCobrosPorCliente(cliente.id);
       const pendiente = cobrosCliente.find((c) => c.estado === 'pendiente');
+      let deudaSaldada = false;
+      let esPagoParcial = false;
       if (pendiente) {
-        if (args.es_pago_parcial) {
-          await cobros.registrarPagoParcial(pendiente.id, monto);
-        } else {
-          await cobros.marcarCobrado(pendiente.id);
-        }
+        const actualizado = await cobros.registrarPagoParcial(pendiente.id, monto);
+        deudaSaldada = actualizado.estado === 'cobrado';
+        esPagoParcial = !deudaSaldada;
       }
-      return { ok: true, mensaje: 'Recibo generado y enviado.', deuda_saldada: !!pendiente && !args.es_pago_parcial, cliente_id: cliente.id };
+
+      const registrado = await recibos.crearRecibo({ cliente_id: cliente.id, concepto, monto, es_pago_parcial: esPagoParcial });
+      const buffer = await pdf.generarRecibo({ cliente, items, monto, concepto, numero: numFmt(registrado.numero), esPagoParcial });
+      await enviarDocumentoConReintento(ctx, { source: buffer, filename: `recibo-${cliente.nombre}.pdf` });
+      return { ok: true, mensaje: 'Recibo generado y enviado.', deuda_saldada: deudaSaldada, cliente_id: cliente.id };
     }
 
     // ---- COBROS ----
@@ -1483,6 +1494,25 @@ async function ejecutarHerramienta(ctx, nombre, args) {
     case 'eliminar_notas_completadas': {
       const cantidad = await notas.eliminarCompletadas();
       return { ok: true, cantidad };
+    }
+
+    case 'consultar_historial_cliente': {
+      const cliente = await resolverCliente(ctx, args);
+      if (!cliente) return errorClienteNoEncontrado(args.cliente_nombre);
+      if (cliente.multiple) return errorClienteAmbiguo(cliente.opciones);
+      const [presupuestosCliente, trabajosCliente, cobrosCliente, visitasCliente] = await Promise.all([
+        presupuestos.historialCompleto(cliente.id),
+        trabajos.trabajosPorCliente(cliente.id),
+        cobros.obtenerCobrosPorCliente(cliente.id),
+        visitas.historialVisitasCliente(cliente.id),
+      ]);
+      const eventos = [
+        ...presupuestosCliente.map((p) => ({ fecha: p.fecha_creacion, tipo: 'presupuesto', detalle: `${p.descripcion} - $${p.monto} [${p.estado}]` })),
+        ...trabajosCliente.map((t) => ({ fecha: t.fecha, tipo: 'trabajo', detalle: t.descripcion })),
+        ...cobrosCliente.map((c) => ({ fecha: c.fecha_cobro || c.creado_en, tipo: 'cobro', detalle: `$${c.monto} (pagado $${c.monto_pagado || 0}) [${c.estado}]` })),
+        ...visitasCliente.map((v) => ({ fecha: v.fecha_hora, tipo: 'visita completada', detalle: v.descripcion })),
+      ].sort((a, b) => new Date(a.fecha) - new Date(b.fecha));
+      return { cliente: cliente.nombre, cantidad: eventos.length, eventos };
     }
 
     // ---- REGLAS PERSONALIZADAS ----
