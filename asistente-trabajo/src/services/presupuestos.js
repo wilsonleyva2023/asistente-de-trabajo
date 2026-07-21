@@ -5,14 +5,17 @@ async function registrarHistorial(presupuesto_id, cambio) {
   await supabase.from('presupuesto_historial').insert([{ presupuesto_id, cambio }]);
 }
 
-async function crearPresupuesto({ cliente_id, items, descripcion, monto, dias_validez }) {
+async function crearPresupuesto({ cliente_id, items, descripcion, monto, dias_validez, alcance_texto, garantia_texto, forma_pago_texto }) {
   const listaItems = items && items.length ? items : [{ descripcion, monto }];
   const totalMonto = listaItems.reduce((acc, i) => acc + Number(i.monto || 0), 0);
   const descripcionGeneral = listaItems.map((i) => i.descripcion).join(' + ');
 
   const { data: presupuesto, error } = await supabase
     .from('presupuestos')
-    .insert([{ cliente_id, descripcion: descripcionGeneral, monto: totalMonto, estado: 'pendiente', dias_validez: dias_validez || 15 }])
+    .insert([{
+      cliente_id, descripcion: descripcionGeneral, monto: totalMonto, estado: 'pendiente', dias_validez: dias_validez || 15,
+      alcance_texto: alcance_texto || null, garantia_texto: garantia_texto || null, forma_pago_texto: forma_pago_texto || null,
+    }])
     .select()
     .single();
   if (error) throw error;
