@@ -150,6 +150,17 @@ async function restaurarCliente(id) {
   return data;
 }
 
+async function buscarClientesArchivadosPorNombre(texto) {
+  const { data, error } = await supabase
+    .from('clientes')
+    .select('*')
+    .eq('archivado', true)
+    .or(`nombre.ilike.%${texto}%,apodo.ilike.%${texto}%`)
+    .order('creado_en', { ascending: false });
+  if (error) throw error;
+  return data;
+}
+
 async function buscarClienteArchivado(texto) {
   const { data, error } = await supabase
     .from('clientes')
@@ -185,5 +196,6 @@ module.exports = {
   archivarCliente,
   restaurarCliente,
   buscarClienteArchivado,
+  buscarClientesArchivadosPorNombre,
   eliminarClientePermanente,
 };
