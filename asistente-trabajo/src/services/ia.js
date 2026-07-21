@@ -66,11 +66,16 @@ CATÁLOGO DE SERVICIOS: mano de obra es un valor fijo; materiales es un rango es
 
 HERRAMIENTAS PROPIAS: si al agendar o hablar de una visita el usuario menciona qué lleva, usá registrar_llevadas_visita. Al completar esa visita, preguntá si recuperó todo lo que llevó (salvo que ya lo haya dicho); si falta algo, queda pendiente en ese cliente hasta que confirme. "Llevo lo de siempre" → usá el kit habitual completo.
 
-REPORTES: preguntas casuales ("cómo ando", "cómo va el negocio") = pedido de reporte; si es amplio, usá consultar_negocio_completo. Texto corto por defecto (3-5 líneas), PDF solo si lo piden. Comparaciones con palabra clara (mejor/peor/similar) además del %. Alertas urgentes antes que números fríos. Períodos naturales ("mes pasado", "este año") calculados por vos.
+REPORTES: preguntas casuales ("cómo ando", "cómo va el negocio") = pedido de reporte; si es amplio, usá consultar_negocio_completo. Texto corto por defecto (3-5 líneas), PDF solo si lo piden. Comparaciones con palabra clara (mejor/peor/similar) además del %. Alertas urgentes antes que números fríos. Períodos naturales ("mes pasado", "este año") calculados por vos. Si el usuario corrige o discute un número de plata que le diste, NUNCA repitas el número viejo — volvé a consultar la herramienta correspondiente antes de responder de nuevo, aunque parezca que ya lo tenías.
+
+FLUJO PRESUPUESTO → TRABAJO → COBRO:
+- Cuando marques un presupuesto como aceptado, ofrecé de una ayudar a agendar la visita para el trabajo (sin insistir si no quiere).
+- Al completar una visita, antes de ofrecer el recibo, preguntá si el trabajo quedó tal cual el presupuesto o si hubo cambios de último momento (ítems de más, de menos, u otro monto) — si los hay, ajustalos primero con agregar/quitar_items_presupuesto o editar_presupuesto antes de generar cualquier recibo.
+- Para "todo lo de un cliente" o pedidos amplios de historial, usá consultar_historial_cliente en vez de mostrar cada cosa por separado.
 
 FOTOS/AUDIO/DOCUMENTOS: sin instrucción clara, decidí según contexto reciente (no preguntes salvo ambigüedad real). Si un cliente puede tener varios trabajos distintos en el tiempo, guardá y buscá las fotos ligadas al trabajo puntual (trabajo_texto), no solo al cliente — si el usuario pide "las fotos del termotanque" y hay más de un trabajo que coincide, preguntá cuál antes de mostrar cualquiera. Ticket/comprobante → leé el monto vos y usá registrar_gasto_desde_ticket. Chapita de equipo con marca/modelo/serie → leelo vos y usá editar_equipo. Documento largo → resumen de 2-3 líneas. Confirmación cortita al guardar.
 
-FORMATO (Telegram, sin markdown): nunca ** ni _; listas con • ; emojis con moderación (✅📋💰📅🔧⚠️📝); frases cortas tipo WhatsApp.
+FORMATO (Telegram, sin markdown): nunca ** ni _; listas con • ; emojis con moderación (✅📋💰📅🔧⚠️📝); frases cortas tipo WhatsApp. DALE VIDA Y ESTRUCTURA: no importa que el texto sea más largo, lo importante es que se vea bien organizado — usá encabezados cortos con emoji para separar secciones, agrupá por fecha o categoría en vez de una lista plana, y dejá que cada ítem importante (presupuesto, visita, cobro) tenga su propia línea bien separada. Un listado, una agenda, o un historial deben leerse de un vistazo, no como un bloque de texto corrido.
 
 Fecha y hora actuales en Argentina: ${new Date().toLocaleString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires', dateStyle: 'full', timeStyle: 'short' })} (usá siempre esta hora como referencia de "ahora", nunca calcules en otro huso horario, y tené en cuenta que se recalcula en cada mensaje, así que siempre está actualizada)
 
@@ -261,10 +266,17 @@ const HERRAMIENTAS = [
       },
       {
         name: 'editar_presupuesto',
-        description: 'Corrige el monto total y/o descripción general del presupuesto activo (cambios simples, no por ítem).',
+        description: 'Corrige datos del presupuesto activo: monto, descripción general (solo el nombre del trabajo, nunca alcance/garantía/forma de pago), o sus textos de alcance/garantía/forma de pago cada uno en su propio campo.',
         parameters: {
           type: 'OBJECT',
-          properties: { cliente_id: CID, cliente_nombre: CNOM, nuevo_monto: { type: 'NUMBER' }, nueva_descripcion: { type: 'STRING' } },
+          properties: {
+            cliente_id: CID, cliente_nombre: CNOM,
+            nuevo_monto: { type: 'NUMBER' },
+            nueva_descripcion: { type: 'STRING', description: 'SOLO el nombre/resumen del trabajo, nunca texto de alcance, garantía o forma de pago.' },
+            nuevo_alcance: { type: 'STRING' },
+            nueva_garantia: { type: 'STRING' },
+            nueva_forma_pago: { type: 'STRING' },
+          },
           required: ['cliente_nombre'],
         },
       },
@@ -878,6 +890,12 @@ const HERRAMIENTAS = [
         name: 'eliminar_notas_completadas',
         description: 'Borra todas las notas ya marcadas como completadas de una vez. SOLO tras confirmación.',
         parameters: { type: 'OBJECT', properties: {} },
+      },
+
+      {
+        name: 'consultar_historial_cliente',
+        description: 'Muestra la línea de tiempo completa de un cliente: presupuestos, trabajos, visitas completadas y cobros, todo junto y ordenado por fecha. Usar cuando el usuario pide "todo lo de tal cliente" o "el historial completo".',
+        parameters: { type: 'OBJECT', properties: { cliente_id: CID, cliente_nombre: CNOM }, required: ['cliente_nombre'] },
       },
 
       // ---- REGLAS PERSONALIZADAS ----
